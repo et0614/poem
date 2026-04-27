@@ -1,0 +1,22 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Atmel Studio Solution File, Format Version 11.00
+VisualStudioVersion = 14.0.23107.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{E66E83B9-2572-4076-B26E-6BE79FF3018A}") = "poemlogger", "poemlogger\poemlogger.cppproj", "{0CF8905F-C4B5-43F1-A850-0DD396E4EFBA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|AVR = Debug|AVR
+		Release|AVR = Release|AVR
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{0CF8905F-C4B5-43F1-A850-0DD396E4EFBA}.Debug|AVR.ActiveCfg = Debug|AVR
+		{0CF8905F-C4B5-43F1-A850-0DD396E4EFBA}.Debug|AVR.Build.0 = Debug|AVR
+		{0CF8905F-C4B5-43F1-A850-0DD396E4EFBA}.Release|AVR.ActiveCfg = Release|AVR
+		{0CF8905F-C4B5-43F1-A850-0DD396E4EFBA}.Release|AVR.Build.0 = Release|AVR
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
