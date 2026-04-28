@@ -59,9 +59,105 @@ uint8_t http_post_cgi_handler(uint8_t * uri_name, st_http_request * p_http_reque
 	return ret;
 }
 
-//ダミー
-uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * buf, uint16_t * len){}
-uint8_t predefined_set_cgi_processor(uint8_t * uri_name, uint8_t * uri, uint8_t * buf, uint16_t * len){}
+// HTTP CGI 応答用バッファサイズ。httpServer 側で確保しているバッファサイズと一致させる。
+#define CGI_BUF_SIZE        2048
+
+// /net.cgi GET: 現在のネットワーク設定をフォーム HTML で返す。
+// 戻り値: 1=処理した (buf 有効, *len 設定済み)、0=未処理 (上位で HTTP_FAILED にする)。
+uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * buf, uint16_t * len)
+{
+    if (strcmp((const char *)uri_name, "net.cgi") != 0) {
+        return 0;
+    }
+
+    const EM_NetworkSettings* s = &EM_Network_Settings;
+    int written = snprintf((char*)buf, CGI_BUF_SIZE,
+        "<!DOCTYPE html><html><head><title>PoEM-pod Network Settings</title>"
+        "<style>"
+        "body{font-family:sans-serif;width:430px;margin:10px auto;font-size:14px}"
+        "label,p{margin:8px 0;display:block}"
+        "input[type=text]{width:200px;padding:3px}"
+        "input[type=submit]{padding:5px 15px;margin-top:8px}"
+        "h3{margin:8px 0 4px}"
+        "</style></head><body>"
+        "<h3>Network</h3>"
+        "<form method=post action=/net.cgi>"
+        "<label>IP: <input type=text name=ip value=%u.%u.%u.%u></label>"
+        "<label>SN: <input type=text name=sn value=%u.%u.%u.%u></label>"
+        "<label>GW: <input type=text name=gw value=%u.%u.%u.%u></label>"
+        "<label>DNS: <input type=text name=dns value=%u.%u.%u.%u></label>"
+        "<h3>MQTT</h3>"
+        "<label>Broker IP: <input type=text name=bip value=%u.%u.%u.%u></label>"
+        "<label>Topic suffix: <input type=text name=topic value=%s maxlength=20></label>"
+        "<p><input type=submit value=Save></p>"
+        "</form>"
+        "</body></html>",
+        s->ip[0],  s->ip[1],  s->ip[2],  s->ip[3],
+        s->sn[0],  s->sn[1],  s->sn[2],  s->sn[3],
+        s->gw[0],  s->gw[1],  s->gw[2],  s->gw[3],
+        s->dns[0], s->dns[1], s->dns[2], s->dns[3],
+        s->bip[0], s->bip[1], s->bip[2], s->bip[3],
+        s->topic_suffix);
+
+    if (written < 0 || written >= CGI_BUF_SIZE) {
+        *len = 0;
+        return 0;
+    }
+    *len = (uint16_t)written;
+    return 1;
+}
+
+// /net.cgi POST: フォームから送られた IP/SN/GW/DNS/BrokerIP/Topic を反映して EEPROM 更新。
+// 反映後はリダイレクト用の小さな HTML を返す。
+uint8_t predefined_set_cgi_processor(uint8_t * uri_name, uint8_t * uri, uint8_t * buf, uint16_t * len)
+{
+    if (strcmp((const char *)uri_name, "net.cgi") != 0) {
+        return HTTP_FAILED;
+    }
+
+    EM_NetworkSettings new_settings = EM_Network_Settings;
+    uint8_t* param_value;
+
+    if ((param_value = get_http_param_value((char *)uri, "ip"))) {
+        parse_ipv4((char*)param_value, new_settings.ip);
+    }
+    if ((param_value = get_http_param_value((char *)uri, "sn"))) {
+        parse_ipv4((char*)param_value, new_settings.sn);
+    }
+    if ((param_value = get_http_param_value((char *)uri, "gw"))) {
+        parse_ipv4((char*)param_value, new_settings.gw);
+    }
+    if ((param_value = get_http_param_value((char *)uri, "dns"))) {
+        parse_ipv4((char*)param_value, new_settings.dns);
+    }
+    if ((param_value = get_http_param_value((char *)uri, "bip"))) {
+        parse_ipv4((char*)param_value, new_settings.bip);
+    }
+    if ((param_value = get_http_param_value((char *)uri, "topic"))) {
+        strncpy(new_settings.topic_suffix, (char*)param_value,
+                sizeof(new_settings.topic_suffix) - 1);
+        new_settings.topic_suffix[sizeof(new_settings.topic_suffix) - 1] = '\0';
+    }
+
+    // 反映 (CRC は EM_updateEEPROM が再計算するためここでは触らない)
+    EM_Network_Settings = new_settings;
+    EM_updateEEPROM();
+
+    int written = snprintf((char*)buf, CGI_BUF_SIZE,
+        "<!DOCTYPE html><html><head><title>Saved</title>"
+        "<style>body{font-family:sans-serif;text-align:center;padding-top:50px}</style>"
+        "</head><body>"
+        "<p>Settings saved. Redirecting...</p>"
+        "<script>setTimeout(function(){location.href='/net.cgi'},1000);</script>"
+        "</body></html>");
+
+    if (written < 0 || written >= CGI_BUF_SIZE) {
+        *len = 0;
+        return HTTP_FAILED;
+    }
+    *len = (uint16_t)written;
+    return HTTP_OK;
+}
 
 /*
 // 補正係数ページのHTMLフォームを生成する共通関数

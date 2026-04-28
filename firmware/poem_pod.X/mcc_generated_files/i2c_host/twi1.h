@@ -70,7 +70,7 @@
  */
 extern const i2c_host_interface_t I2C1_Host;
 
-#define TWI1_BAUD(F_SCL, T_RISE)((((((float)4000000 / (float)(F_SCL))) - 10 - ((float)4000000 * (T_RISE) / 1000000))) / 2)
+#define TWI1_BAUD(F_SCL, T_RISE)((((((float)24000000 / (float)(F_SCL))) - 10 - ((float)24000000 * (T_RISE) / 1000000))) / 2)
 
 /**
  * @ingroup i2c_host

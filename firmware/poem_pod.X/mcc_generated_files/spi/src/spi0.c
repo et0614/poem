@@ -57,18 +57,18 @@ const struct SPI_INTERFACE SPI0_Host =
 
 static const spi_configuration_t spi0_configuration[] =
 {
-    { 0x35, 0xc4 },
-    { 0x20, 0xC4 }
+    { 0x21, 0xc4 },
+    { 0x34, 0xC4 }
 };
 
 void SPI0_Initialize(void)
 {
     SPI0.CTRLA &= ~SPI_ENABLE_bm;
-    SPI0.CTRLA = (0 << SPI_CLK2X_bp)                /* CLK2X (disabled) */
+    SPI0.CTRLA = (1 << SPI_CLK2X_bp)                /* CLK2X (enabled) */
 				|(0 << SPI_DORD_bp)                 /* DORD (disabled) */
 				|(0 << SPI_ENABLE_bp)               /* ENABLE (disabled) */
 				|(1 << SPI_MASTER_bp)               /* MASTER (enabled) */
-				|(SPI_PRESC_DIV4_gc);               /* PRESC (DIV4) */
+				|(SPI_PRESC_DIV64_gc);              /* PRESC (DIV64) */
     SPI0.CTRLB = (1 << SPI_BUFEN_bp)                /* BUFEN (enabled) */
 				|(1 << SPI_BUFWR_bp)                /* BUFWR (enabled) */
 				|(SPI_MODE_0_gc)                    /* MODE (0) */

@@ -107,7 +107,7 @@ void TWI1_Initialize(void)
     TWI1.DBGCTRL = 0x0;
 
     // Host Baud Rate Control
-    TWI1.MBAUD = (uint8_t)TWI1_BAUD(104166, 0.1);
+    TWI1.MBAUD = (uint8_t)TWI1_BAUD(100671, 0.1);
 
     // Host Address
     TWI1.MADDR = 0x0;
@@ -139,7 +139,7 @@ void TWI1_Deinitialize(void)
     TWI1.DBGCTRL = 0x00;
     
     // Host Baud Rate Control
-    TWI1.MBAUD = (uint8_t)TWI1_BAUD(104166, 0.1);
+    TWI1.MBAUD = (uint8_t)TWI1_BAUD(100671, 0.1);
     
     // ENABLE enabled; QCEN disabled; RIEN false; SMEN disabled; TIMEOUT DISABLED; WIEN false; 
     TWI1.MCTRLA = 0x00;

@@ -1,10 +1,15 @@
 #include "mcc_generated_files/system/system.h"
 #include "mcc_generated_files/timer/delay.h"
+#include "mcc_generated_files/timer/rtc.h"
 #include "mcc_generated_files/system/pins.h"
+
+#include <avr/wdt.h>
 
 #include "main.h"
 #include "hal_io.h"
 #include "eeprom_manager.h"
+#include "node_manager.h"
+#include "mqtt_app.h"
 
 //https://github.com/Wiznet/ioLibrary_Driver の公式ライブラリを使用
 #include "W5500/w5500.h" //W5500によるEthernet通信
@@ -12,9 +17,14 @@
 #include "W5500/MQTTClient.h" //MQTT通信
 #include "W5500/httpServer.h" //HTTPサーバー
 
-#define TCP_SOCKET (0)
-#define MQTT_PORT (1883) //MQTT通信用ポート
-#define MQTT_HTTP_BUF_SIZE (2048)
+#define HTTP_BUF_SIZE (2048)
+
+// 通信エラーを通知するための status1 ビット (子機独自のエラービットと衝突しないよう
+// MSB を確保する。子機のフラグは下位ビット側を使う想定)。
+#define NODE_COMM_ERROR_BIT     0x80
+
+// SCAN ボタンのデバウンス用閾値 (ms)。連続して押下を検知するための最小間隔。
+#define SCAN_DEBOUNCE_MS        50
 
 //トップページHTML
 const char index_page_content[] =
@@ -34,16 +44,15 @@ const char index_page_content[] =
 "<h1>Configuration Menu</h1>"
 "<ul>"
 "<li><a href=\"/net.cgi\">Network Settings</a></li>"
-"<li><a href=\"/correct_a.cgi\">Correction Factors A</a></li>"
-"<li><a href=\"/correct_b.cgi\">Correction Factors B</a></li>"
-"<li><a href=\"/correct_c.cgi\">Correction Factors C</a></li>"
-"<li><a href=\"/vel.cgi\">Velocity Coefficients</a></li>"
 "</ul>"
 "</body>"
 "</html>";
 
 //初期化中フラグ
 volatile bool isInitMode = true;
+
+// 1秒ごとに立つ MQTT 送信要求フラグ。RTC OVF で true に。
+volatile bool g_publish_request = false;
 
 
 // 1msecごとのコールバック関数
@@ -52,19 +61,50 @@ void msecHandler(void)
     MilliTimer_Handler();
 }
 
+// 1secごとのコールバック (RTC OVF, 32768/32768Hz = 1.0s)
+static void secHandler(void)
+{
+    g_publish_request = true;
+}
+
+// MCC の SPI0_Initialize() で設定された値を W5500 用に書き換える。
+// MCC Melody の SPI Abstract Driver は GUI で PRESC/CLK2X/BUFEN を設定できないため、
+// SYSTEM_Initialize() の直後に明示的に再設定する。
+//   - 6 MHz (F_CPU=24MHz, PRESC=DIV4, CLK2X=OFF)
+//   - BUFEN/BUFWR 有効 (連続バイト送信を効率化)
+//   - SPI Mode 0 (CPOL=0, CPHA=0; W5500 仕様)
+//   - SS Disable (CS は PA7 を GPIO で制御)
+static void spi0_reconfigure_for_w5500(void)
+{
+    SPI0.CTRLA &= ~SPI_ENABLE_bm;
+    SPI0.CTRLA = (0 << SPI_CLK2X_bp)
+               | (0 << SPI_DORD_bp)
+               | (1 << SPI_MASTER_bp)
+               | SPI_PRESC_DIV4_gc;
+    SPI0.CTRLB = (1 << SPI_BUFEN_bp)
+               | (1 << SPI_BUFWR_bp)
+               | SPI_MODE_0_gc
+               | (1 << SPI_SSD_bp);
+    SPI0.CTRLA |= SPI_ENABLE_bm;
+}
+
 int main(void)
 {
     SYSTEM_Initialize();
-    
+
+    // SPI0 を W5500 用に上書き設定
+    spi0_reconfigure_for_w5500();
+
     // 電力安定化まで0.5s待つ
 	DELAY_milliseconds(500);
-    
+
     // EEPROM読み込みまたは初期化
     EM_loadEEPROM();
-    
+
     // イベントハンドラ登録
     TCB0_OverflowCallbackRegister(msecHandler); // 1msecタイマ
-    
+    RTC_SetOVFIsrCallback(secHandler);          // 1secタイマ (MQTT publish 要求)
+
     //WIZnetドライバにコールバック関数を登録
 	reg_wizchip_cris_cbfunc(spi_cris_enter, spi_cris_exit);
 	reg_wizchip_cs_cbfunc(spi_cs_select, spi_cs_deselect);
@@ -88,8 +128,8 @@ static void runHttpServerMode(){
 	uint8_t g_http_socklist[] = {1}; // HTTPソケット
 		
 	//HTTPサーバー初期化
-	uint8_t http_tx_buff[MQTT_HTTP_BUF_SIZE];
-	uint8_t http_rx_buff[MQTT_HTTP_BUF_SIZE];
+	uint8_t http_tx_buff[HTTP_BUF_SIZE];
+	uint8_t http_rx_buff[HTTP_BUF_SIZE];
 	httpServer_init(http_tx_buff, http_rx_buff, 1, g_http_socklist);
 	// httpServerにリセット関数を登録する
 	//reg_httpServer_cbfunc(mcu_reset, NULL); // 第2引数はWDTリセット用だが今回は未使用
@@ -98,71 +138,131 @@ static void runHttpServerMode(){
 	//初期化モードの場合は赤LED点灯
 	turnOnRedLED();
 	
-	while(true) httpServer_run(g_http_socklist[0]);
+	while(true) {
+		httpServer_run(g_http_socklist[0]);
+		wdt_reset();
+	}
 }
 
-static void runMqttClientMode(){
-	/*//計測データを保持
-	SensorData sensor_data_A[NUM_TH_SENSORS], sensor_data_B[NUM_TH_SENSORS], sensor_data_C[NUM_TH_SENSORS];
-	float avg_vel_V[NUM_VEL_SENSORS], avg_vel[NUM_VEL_SENSORS];
-	TH_Accumulator accumulator_A[NUM_TH_SENSORS], accumulator_B[NUM_TH_SENSORS], accumulator_C[NUM_TH_SENSORS];
-	VEL_Accumulator accumulator_V[NUM_VEL_SENSORS];
-	//計測回数を保持
-	uint16_t sample_count = 0;
-	
-	// 初回接続試行
-	while(!initMqttClient()) {
-		blinkRedLED(2); // 接続失敗時にLED点滅
-		_delay_ms(2000); // 2秒待機
-	}
-	
-	while(true) {
-		// MQTT接続確認
-		if (!mqtt_client.isconnected || getSn_SR(TCP_SOCKET) != SOCK_ESTABLISHED) {
-			// 既存の接続を閉じる
-			disconnect(TCP_SOCKET);
+// SCAN ボタン (IO_SCAN, PF0、プルアップ → 押下で Low) のエッジ検出。
+// 立ち下がり (Hi→Lo) を検知したら true を返す。
+static bool scanButtonPressed(void)
+{
+    static uint8_t prev_level = 1; // 起動時はプルアップで Hi
+    uint8_t level = IO_SCAN_GetValue() ? 1 : 0;
 
-			// 再接続を試みる
-			while(!initMqttClient()) {
-				blinkRedLED(3); // 再接続失敗時にLED点滅
-				_delay_ms(3000); // 3秒待機してリトライ
-			}
-		}
-		
-		// MQTT接続の維持
-		if(mqtt_client.isconnected) MQTTYield(&mqtt_client, 10);
+    bool pressed = (prev_level == 1 && level == 0);
+    prev_level = level;
 
-		// MQTT送信要求あり
-		if(g_publish_request) {
-			g_publish_request = false;
+    if (pressed) {
+        // チャタリング対策: 短時間後に再確認
+        DELAY_milliseconds(SCAN_DEBOUNCE_MS);
+        if (IO_SCAN_GetValue()) {
+            // ノイズだった
+            prev_level = 1;
+            return false;
+        }
+    }
+    return pressed;
+}
 
-			if (0 < sample_count) {
-				//計測データを平均化
-				calculateAverages(
-					sensor_data_A,sensor_data_B, sensor_data_C, avg_vel_V, avg_vel,
-					accumulator_A, accumulator_B, accumulator_C, accumulator_V, sample_count);
-					
-				//MQTTで送信
-				publishData(sensor_data_A, sensor_data_B, sensor_data_C, avg_vel_V, avg_vel, sample_count);
-				
-				//送信成功をLEDで通知
-				blinkGreenLED(1);
-				
-				//データを初期化
-				memset(accumulator_A, 0, sizeof(accumulator_A));
-				memset(accumulator_B, 0, sizeof(accumulator_B));
-				memset(accumulator_C, 0, sizeof(accumulator_C));
-				memset(accumulator_V, 0, sizeof(accumulator_V));
-				sample_count = 0;
-			}
-		}
+// 検出した全子機について config トピックを 1 回ずつ publish する。
+static void publishAllConfigs(void)
+{
+    char    topic[24];
+    uint8_t payload[256];
 
-		//各センサーからデータを1回分読み取り、積算データに加える
-		collectSensorData(accumulator_A, accumulator_B, accumulator_C, accumulator_V, sample_count);
-		
-		//計測回数を保存
-		sample_count++;
-	}*/
+    for (uint8_t i = 0; i < NM_NodeCount; i++) {
+        slave_node_t* node = &NM_Nodes[i];
+        NM_buildConfigTopic(node, topic, sizeof(topic));
+        uint16_t len = NM_buildConfigJson(node, (char*)payload, sizeof(payload));
+        if (len == 0) continue;
+        MA_publish(topic, payload, len);
+        wdt_reset();
+    }
+}
+
+// SCAN ボタンが押されたときの処理: I²C 全走査 → config 全送信 → 緑 LED 点滅で通知。
+static void handleScanRequest(void)
+{
+    blinkGreenLED(1);
+    NM_scan();
+    publishAllConfigs();
+    blinkGreenLED(2);
+}
+
+// 1 ノードを poll → JSON 生成 → publish。Status2==1 なら seq +1 して 0 を書き戻す。
+// I²C 失敗時は status1 に通信異常ビットを立て、value は前回値のまま publish する。
+static void pollAndPublishOne(slave_node_t* node)
+{
+    char    topic[24];
+    uint8_t payload[256];
+
+    if (NM_pollOne(node)) {
+        // 通信成功: 通信異常ビットを下ろす (子機側のフラグはそのまま反映)
+        node->status1 &= (uint8_t)~NODE_COMM_ERROR_BIT;
+
+        // 新値を観測したらシーケンス番号を進めてハンドシェイク
+        if (node->status2 == 1) {
+            node->seq = (node->seq == SEQ_INITIAL) ? 0 : (uint8_t)((node->seq + 1) % 255);
+            NM_clearStatus2(node);
+        }
+    } else {
+        // 通信失敗: 異常ビットを立てる。リストからは外さない (生存確認のため publish 継続)
+        node->status1 |= NODE_COMM_ERROR_BIT;
+    }
+
+    NM_buildDataTopic(node, topic, sizeof(topic));
+    uint16_t len = NM_buildDataJson(node, (char*)payload, sizeof(payload));
+    if (len > 0) {
+        MA_publish(topic, payload, len);
+    }
+}
+
+static void runMqttClientMode(void)
+{
+    NM_init();
+
+    // 初回接続試行 (失敗中は赤 LED 点滅で外部から状況がわかるように)
+    while (!MA_connect()) {
+        blinkRedLED(2);
+        DELAY_milliseconds(2000);
+        wdt_reset();
+    }
+
+    while (true) {
+        wdt_reset();
+
+        // MQTT 接続が落ちていたら再接続
+        if (!MA_isConnected()) {
+            MA_disconnect();
+            while (!MA_connect()) {
+                blinkRedLED(3);
+                DELAY_milliseconds(3000);
+                wdt_reset();
+            }
+        }
+
+        // keepalive
+        MA_yield(10);
+
+        // SCAN ボタン: 子機の再走査と config 再送信
+        if (scanButtonPressed()) {
+            handleScanRequest();
+        }
+
+        // 1 秒タイマー: 全子機ポーリング → publish
+        if (g_publish_request) {
+            g_publish_request = false;
+
+            for (uint8_t i = 0; i < NM_NodeCount; i++) {
+                pollAndPublishOne(&NM_Nodes[i]);
+                wdt_reset();
+            }
+
+            blinkGreenLED(1); // 1 周期ぶんの publish 完了通知
+        }
+    }
 }
 
 // <editor-fold defaultstate="collapsed" desc="W5500用コールバック関数">
@@ -187,18 +287,23 @@ void spi_cs_deselect(void) {
 	PORTA.OUTSET = PIN7_bm; // PA7をHighに
 }
 
-// 1バイトSPI読み出し
+// BUFEN モード前提の SPI バイトアクセス。
+//   - DREIF: 送信バッファ空き (次のデータを書き込み可能)
+//   - RXCIF: 受信完了 (SPI0.DATA を読むとクリア)
+
+// 1バイトSPI読み出し (ダミー 0xFF 送信で受信を駆動)
 uint8_t spi_read_byte(void) {
-	SPI0.DATA = 0xFF; // ダミーデータを送信して読み出しを開始
-	while (!(SPI0.INTFLAGS & SPI_IF_bm)); // 送受信完了待ち (SPIFフラグが立つまで)
-	return SPI0.DATA; // 受信データを返す
+	while (!(SPI0.INTFLAGS & SPI_DREIF_bm));
+	SPI0.DATA = 0xFF;
+	while (!(SPI0.INTFLAGS & SPI_RXCIF_bm));
+	return SPI0.DATA;
 }
 
-// 1バイトSPI書き込み
+// 1バイトSPI書き込み (受信側はクリアのため捨てる)
 void spi_write_byte(uint8_t data) {
-	SPI0.DATA = data; // データを送信
-	while (!(SPI0.INTFLAGS & SPI_IF_bm)); // 送信完了待ち (SPIFフラグが立つまで)
-	// W5500では書き込み時のMISOは通常無視できるが、フラグクリアのために読み出す
+	while (!(SPI0.INTFLAGS & SPI_DREIF_bm));
+	SPI0.DATA = data;
+	while (!(SPI0.INTFLAGS & SPI_RXCIF_bm));
 	(void)SPI0.DATA;
 }
 

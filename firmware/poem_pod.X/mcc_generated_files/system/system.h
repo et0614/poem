@@ -44,6 +44,7 @@ extern "C" {
 #include "config_bits.h"
 #include "../system/pins.h"
 #include "../nvm/nvm.h"
+#include "../timer/rtc.h"
 #include "../system/interrupt.h"
 #include "../system/clock.h"
 #include "../i2c_host/twi1.h"

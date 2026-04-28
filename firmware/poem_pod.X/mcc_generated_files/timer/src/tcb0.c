@@ -59,7 +59,7 @@ void TCB0_Initialize(void)
         | (0 << TCB_EDGE_bp)   // EDGE disabled
         | (0 << TCB_FILTER_bp);  // FILTER disabled
 
-    TCB0.CCMP = 0xFA0U;  // CCMP 0xFA0
+    TCB0.CCMP = 0x5DC0U;  // CCMP 0x5DC0
 
     TCB0.CNT = 0x0;  // CNT 0xNAN
 

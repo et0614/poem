@@ -26,14 +26,12 @@ static bool eeprom_wait_ready(void)
 typedef struct {
     uint8_t init_flag;      // 0x0000
     EM_NetworkSettings net_settings;
-    uint8_t sensing_enabled;
     uint8_t is_first_run;
 } EepromMap;
 
 // 自動的にアドレス数値に変換
 #define ADDR_INIT_FLAG        (EEPROM_BASE_ADDR +offsetof(EepromMap, init_flag))
 #define ADDR_NET_SETTING      (EEPROM_BASE_ADDR +offsetof(EepromMap, net_settings))
-#define ADDR_SENSING_ENABLED  (EEPROM_BASE_ADDR +offsetof(EepromMap, sensing_enabled))
 #define ADDR_IS_FIRST_RUN     (EEPROM_BASE_ADDR +offsetof(EepromMap, is_first_run))
 
 //計測設定
@@ -41,8 +39,6 @@ EM_NetworkSettings EM_Network_Settings;
 uint8_t EM_Is_First_Run = true;
 static EM_NetworkSettings last_network_settings;
 static uint8_t last_run_state;
-
-uint8_t EM_Sensing_Enabled = true;
 
 // <editor-fold defaultstate="collapsed" desc="EEPROMブロック読み込み・書き込み処理">
 
@@ -96,10 +92,6 @@ static void initNetwork(){
 //EEPROMを初期化する
 void EM_resetEEPROM()
 {
-    //センシング有効・無効
-    if (eeprom_wait_ready())
-        EEPROM_Write(ADDR_SENSING_ENABLED, 1); //有効
-
     //初回起動フラグ
     if (eeprom_wait_ready())
         EEPROM_Write(ADDR_IS_FIRST_RUN, 1); //有効

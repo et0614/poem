@@ -27,8 +27,6 @@ typedef struct{
 
 extern EM_NetworkSettings EM_Network_Settings;
 
-extern uint8_t EM_Sensing_Enabled;
-
 extern uint8_t EM_Is_First_Run;
     
 //EEPROMを読み込む

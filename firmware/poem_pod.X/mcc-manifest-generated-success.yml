@@ -2,7 +2,7 @@
 
 manifest_file_version: 1.0.0
 project: poem_pod
-creation_date: 2026-04-27T15:38:52.632+09:00[Asia/Tokyo]
+creation_date: 2026-04-28T08:55:51.005+09:00[Asia/Tokyo]
 operating_system: Windows 11
 mcc_mode: IDE
 mcc_mode_version: v6.25
@@ -27,7 +27,9 @@ modules:
 - {name: '@mchp-mcc/scf-avr8-clkctrl-v3', type: MELODY, version: 2.0.10}
 - {name: '@mchp-mcc/scf-avr8-interrupt-v1', type: MELODY, version: 5.0.12}
 - {name: '@mchp-mcc/scf-avr8-memory-v1', type: MELODY, version: 7.1.0}
+- {name: '@mchp-mcc/scf-avr8-rtc-v1', type: MELODY, version: 4.2.5}
 - {name: '@mchp-mcc/scf-avr8-spi-v1', type: MELODY, version: 5.1.0}
 - {name: '@mchp-mcc/scf-avr8-tcb-v1', type: MELODY, version: 6.1.1}
 - {name: '@mchp-mcc/scf-avr8-twi-v1', type: MELODY, version: 8.2.0}
+- {name: '@mchp-mcc/scf-avr8-wwdt-v1', type: MELODY, version: 4.2.5}
 - {name: '@mchp-mcc/spi-host-driver', type: MELODY, version: 1.2.1}
