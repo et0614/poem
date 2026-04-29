@@ -19,10 +19,6 @@
 
 #define HTTP_BUF_SIZE (2048)
 
-// 通信エラーを通知するための status1 ビット (子機独自のエラービットと衝突しないよう
-// MSB を確保する。子機のフラグは下位ビット側を使う想定)。
-#define NODE_COMM_ERROR_BIT     0x80
-
 // SCAN ボタンのデバウンス用閾値 (ms)。連続して押下を検知するための最小間隔。
 #define SCAN_DEBOUNCE_MS        50
 
@@ -192,15 +188,14 @@ static void handleScanRequest(void)
 }
 
 // 1 ノードを poll → JSON 生成 → publish。Status2==1 なら seq +1 して 0 を書き戻す。
-// I²C 失敗時は status1 に通信異常ビットを立て、value は前回値のまま publish する。
+// I²C 失敗時は status1 を STATUS1_ALL_STALE (0xFF) で上書きし、value は前回値のまま publish する。
 static void pollAndPublishOne(slave_node_t* node)
 {
     char    topic[24];
     uint8_t payload[256];
 
     if (NM_pollOne(node)) {
-        // 通信成功: 通信異常ビットを下ろす (子機側のフラグはそのまま反映)
-        node->status1 &= (uint8_t)~NODE_COMM_ERROR_BIT;
+        // 通信成功: status1 は NM_pollOne が子機から読み出した値で上書き済み
 
         // 新値を観測したらシーケンス番号を進めてハンドシェイク
         if (node->status2 == 1) {
@@ -208,8 +203,8 @@ static void pollAndPublishOne(slave_node_t* node)
             NM_clearStatus2(node);
         }
     } else {
-        // 通信失敗: 異常ビットを立てる。リストからは外さない (生存確認のため publish 継続)
-        node->status1 |= NODE_COMM_ERROR_BIT;
+        // 通信失敗: 全計測値が信頼できないことを示す。リストからは外さない (生存確認のため publish 継続)
+        node->status1 = STATUS1_ALL_STALE;
     }
 
     NM_buildDataTopic(node, topic, sizeof(topic));

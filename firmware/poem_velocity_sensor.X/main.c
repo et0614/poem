@@ -226,10 +226,10 @@ int main(void)
             // 残予熱時間
             heating_timer = (heating_timer < INTERRUPT_MSEC) ? 0 : (heating_timer - INTERRUPT_MSEC);
 
-            // Status1 更新 (予熱中フラグ)
+            // Status1 更新 (予熱中は両計測値とも stale)
             ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-                if (heating_timer > 0) SharedMemory.reg.status1 |= STATUS1_HEATING_MASK;
-                else                    SharedMemory.reg.status1 &= (uint8_t)~STATUS1_HEATING_MASK;
+                if (heating_timer > 0) SharedMemory.reg.status1 = STATUS1_ALL_STALE;
+                else                    SharedMemory.reg.status1 = 0x00;
             }
 
             // 計測準備が整っていれば計測

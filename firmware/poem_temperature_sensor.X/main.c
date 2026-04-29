@@ -113,9 +113,9 @@ int main(void)
     SharedMemory.reg.status2       = 0;
     for (uint8_t i = 0; i < 8; i++) SharedMemory.reg.value[i] = 0.0f;
 
-    // SHT4x 初期化 (失敗しても COMM_ERROR で通知して継続)
+    // SHT4x 初期化 (失敗しても status1 = STATUS1_ALL_STALE で通知して継続)
     if (!SHT4x_Initialize(SHT4X_TYPE)) {
-        SharedMemory.reg.status1 |= STATUS1_COMM_ERROR_MASK;
+        SharedMemory.reg.status1 = STATUS1_ALL_STALE;
     }
 
     // RTC OVF (1sec) コールバック登録
@@ -156,11 +156,11 @@ int main(void)
             // SHT4x 計測
             if (measureAndPublish()) {
                 ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-                    SharedMemory.reg.status1 &= (uint8_t)~STATUS1_COMM_ERROR_MASK;
+                    SharedMemory.reg.status1 = 0x00;
                 }
             } else {
                 ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-                    SharedMemory.reg.status1 |= STATUS1_COMM_ERROR_MASK;
+                    SharedMemory.reg.status1 = STATUS1_ALL_STALE;
                 }
             }
         }

@@ -48,6 +48,12 @@ extern "C" {
 // シーケンス番号の特殊値: 親機がまだ一度も新値を観測していないことを示す
 #define SEQ_INITIAL             255
 
+// Status1 のビット規約 (per-value bitmask):
+//   bit i (i < data_count) = value[i] が stale / 異常 (1=信頼できない)
+//   全計測値が信頼できないときは 0xFF を立てる慣例
+//   親機が子機を読めなかった場合も 0xFF として publish する
+#define STATUS1_ALL_STALE       0xFF
+
 // 親機側 RAM に保持する子機状態
 typedef struct {
     uint8_t  i2c_addr;                          // 7bit

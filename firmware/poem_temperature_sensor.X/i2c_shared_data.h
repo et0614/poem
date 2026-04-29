@@ -65,9 +65,11 @@ extern volatile I2C_Map_t SharedMemory;
 // ===== アドレス変更鍵 ======================================================
 #define ADDR_KEY_UNLOCK   0xA5
 
-// ===== Status1 ビット定義 ==================================================
-#define STATUS1_COMM_ERROR_BIT    (0)  // SHT4x との通信失敗
-#define STATUS1_COMM_ERROR_MASK   (1 << STATUS1_COMM_ERROR_BIT)
+// ===== Status1 ビット規約 =================================================
+// per-value bitmask: bit i (i < data_count) = value[i] が stale / 異常
+// 全計測値が信頼できないときは 0xFF を立てる慣例
+// (例: SHT4x 通信失敗、親機が子機を読めなかった場合)
+#define STATUS1_ALL_STALE         (0xFF)
 
 // ===== 計測値インデックス ==================================================
 #define VAL_IDX_TEMPERATURE  (0)  // value[0] = 温度 [°C]
