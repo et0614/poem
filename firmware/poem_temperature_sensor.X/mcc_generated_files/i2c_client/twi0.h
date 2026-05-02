@@ -3,7 +3,7 @@
  *
  * @file twi0.h
  *
- * @defgroup i2c_client TWI0_CLIENT
+ * @defgroup i2c_interrupt TWI0_CLIENT_INTERRUPT
  *
  * @brief This header file includes API prototypes and various data types for the TWI0 client driver.
  *
@@ -61,8 +61,6 @@
 #define I2C0_Client_TransferDirGet TWI0_TransferDirGet
 #define I2C0_Client_LastByteAckStatusGet TWI0_LastByteAckStatusGet
 #define I2C0_Client_CallbackRegister TWI0_CallbackRegister
-#define I2C0_Client_Tasks TWI0_Tasks
-
 /**
  * @ingroup I2C_CLIENT
  * @brief Represents an instance of the portable interface structure designed for TWI0 client.
@@ -70,7 +68,7 @@
 extern const i2c_client_interface_t I2C0_Client;
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @brief Initializes the TWI0 client module according to the settings specified in the MPLAB?? Code Configurator Melody UI.
  * @param None.
  * @return None. \n
@@ -78,7 +76,7 @@ extern const i2c_client_interface_t I2C0_Client;
 void TWI0_Initialize(void);
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @brief Resets the registers to their default Power-on Reset (POR) values.
  * @param None.
  * @return None. \n
@@ -86,7 +84,7 @@ void TWI0_Initialize(void);
 void TWI0_Deinitialize(void);
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @brief Sends data to a host on the bus.
  *        Ensure TWI0 is initialized using TWI0_Initialize() before invoking this function.
  * @param [in] data - A byte that will be written by TWI0
@@ -95,7 +93,7 @@ void TWI0_Deinitialize(void);
 void TWI0_WriteByte(uint8_t data);
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @brief Reads data from a host on the bus.
  *        Ensure TWI0 is initialized using TWI0_Initialize() before invoking this function.
  * @param None.
@@ -104,7 +102,7 @@ void TWI0_WriteByte(uint8_t data);
 uint8_t TWI0_ReadByte(void);
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @brief Retrieves the most recently matched address received from the host.
  *        Ensure TWI0 client is initialized using 
  *        TWI0_Initialize() before invoking this function.
@@ -114,7 +112,7 @@ uint8_t TWI0_ReadByte(void);
 uint16_t TWI0_ReadAddr(void);
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @brief Retrieves the type of error that occurred during I2C communication. 
  *        Ensure TWI0 is initialized using TWI0_Initialize() before invoking this function.
  * @param None.
@@ -126,7 +124,7 @@ uint16_t TWI0_ReadAddr(void);
 i2c_client_error_t TWI0_ErrorGet(void);
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @brief Retrieves the data transfer direction.
  *        Ensure TWI0 is initialized using TWI0_Initialize() before invoking this function.
  * @param None. 
@@ -136,7 +134,7 @@ i2c_client_error_t TWI0_ErrorGet(void);
 i2c_client_transfer_dir_t TWI0_TransferDirGet(void);
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @brief Retrieves the acknowledgement status from host.
  *        Ensure TWI0 is initialized using TWI0_Initialize() before invoking this function.
  * @param None. 
@@ -146,20 +144,12 @@ i2c_client_transfer_dir_t TWI0_TransferDirGet(void);
 i2c_client_ack_status_t TWI0_LastByteAckStatusGet(void);
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @brief Registers a callback function.
  * @param callback - Pointer to custom callback.
  * @return None.
  */
 void TWI0_CallbackRegister(bool (*callback)(i2c_client_transfer_event_t clientEvent));
 
-/**
- * @ingroup I2C_client
- * @brief Task to be polled I2C client events.
- *        Ensure TWI0 client is initialized using TWI0_Initialize() before invoking this function.
- * @param None.
- * @return None. \n
- */
-void TWI0_Tasks(void);
 
 #endif /* TWI0_H */

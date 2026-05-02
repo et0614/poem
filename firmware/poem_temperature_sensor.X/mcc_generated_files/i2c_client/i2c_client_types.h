@@ -3,7 +3,7 @@
  *
  * @file {moduleGroupNameLowerCase}_client_types.h
  *
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  *
  * @brief This header file contains helper structures for the implementation of the I2C client driver.
  *
@@ -37,7 +37,7 @@
 #define	I2C_CLIENT_TYPES_H
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @enum i2c_client_transfer_dir_t
  * @brief Enumeration to determine the direction of data transfer initiated by the host, 
  *        as determined by the I2Cx_TransferDirGet function
@@ -49,7 +49,7 @@ typedef enum
 } i2c_client_transfer_dir_t;
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @enum i2c_client_ack_status_t
  * @brief Enumeration for acknowledgment and non-acknowledgment status.
  */
@@ -60,7 +60,7 @@ typedef enum
 } i2c_client_ack_status_t;
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @enum i2c_client_transfer_event_t
  * @brief Enumeration defining the various I2C event types.
  */
@@ -75,7 +75,7 @@ typedef enum
 } i2c_client_transfer_event_t;
 
 /**
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  * @enum i2c_client_error_t
  * @brief Enumeration that specifies the possible errors in the I2C client driver.
  */

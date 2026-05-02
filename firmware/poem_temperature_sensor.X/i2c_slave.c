@@ -25,13 +25,15 @@ static volatile bool is_address_phase = true;
 // 指定レジスタアドレスへの書き込みが許可されているか判定。
 // - 0x04 Addr.Key       : 常に許可
 // - 0x05 New Addr.      : Addr.Key が ADDR_KEY_UNLOCK のときのみ許可
-// - 0x19 Status2        : 親機の ACK 用に常に許可
-// - 0x3C 以降 拡張領域  : 常に許可 (補正係数)
+// - 0x18-0x27 Name      : 常に許可 (装置ラベル、鍵不要)
+// - 0x29 Status2        : 親機の ACK 用に常に許可
+// - 0x4C 以降 拡張領域  : 常に許可 (補正係数)
 // その他は読み出し専用
 static bool isWritable(uint8_t addr)
 {
     if (addr == REG_ADDR_KEY) return true;
     if (addr == REG_NEW_ADDR) return (SharedMemory.reg.addr_key == ADDR_KEY_UNLOCK);
+    if (addr >= REG_NAME && addr < REG_NAME + NODE_NAME_LEN) return true;
     if (addr == REG_STATUS2) return true;
     if (addr >= REG_EXTENSION && addr < sizeof(SharedMemory.bytes)) return true;
     return false;
@@ -76,7 +78,11 @@ bool I2C_Slave_Callback(i2c_client_transfer_event_t event)
                         // アドレス変更を検知 (STOP 受信時に EEPROM 反映)
                         if (reg_pointer == REG_NEW_ADDR) addr_changed_flag = true;
 
-                        // 拡張領域 (補正係数) への書き込みは設定変更フラグ
+                        // Name 領域への書き込みは EEPROM 反映トリガ
+                        if (reg_pointer >= REG_NAME && reg_pointer < REG_NAME + NODE_NAME_LEN)
+                            cnfg_update_flag = true;
+
+                        // 拡張領域 (補正係数) への書き込みも EEPROM 反映トリガ
                         if (reg_pointer >= REG_EXTENSION) cnfg_update_flag = true;
                     }
                     reg_pointer++;

@@ -39,11 +39,11 @@ static void (*IO_PA4_InterruptHandler)(void);
 static void (*IO_PA6_InterruptHandler)(void);
 static void (*IO_PF3_InterruptHandler)(void);
 static void (*IO_PF2_InterruptHandler)(void);
-static void (*IO_SCAN_InterruptHandler)(void);
 static void (*IO_RESET_InterruptHandler)(void);
+static void (*IO_SCAN_InterruptHandler)(void);
 static void (*IO_SS_InterruptHandler)(void);
-static void (*IO_RLED_InterruptHandler)(void);
 static void (*IO_GLED_InterruptHandler)(void);
+static void (*IO_RLED_InterruptHandler)(void);
 
 void PIN_MANAGER_Initialize()
 {
@@ -112,11 +112,11 @@ void PIN_MANAGER_Initialize()
     IO_PA6_SetInterruptHandler(IO_PA6_DefaultInterruptHandler);
     IO_PF3_SetInterruptHandler(IO_PF3_DefaultInterruptHandler);
     IO_PF2_SetInterruptHandler(IO_PF2_DefaultInterruptHandler);
-    IO_SCAN_SetInterruptHandler(IO_SCAN_DefaultInterruptHandler);
     IO_RESET_SetInterruptHandler(IO_RESET_DefaultInterruptHandler);
+    IO_SCAN_SetInterruptHandler(IO_SCAN_DefaultInterruptHandler);
     IO_SS_SetInterruptHandler(IO_SS_DefaultInterruptHandler);
-    IO_RLED_SetInterruptHandler(IO_RLED_DefaultInterruptHandler);
     IO_GLED_SetInterruptHandler(IO_GLED_DefaultInterruptHandler);
+    IO_RLED_SetInterruptHandler(IO_RLED_DefaultInterruptHandler);
 }
 
 /**
@@ -185,19 +185,6 @@ void IO_PF2_DefaultInterruptHandler(void)
     // or set custom function using IO_PF2_SetInterruptHandler()
 }
 /**
-  Allows selecting an interrupt handler for IO_SCAN at application runtime
-*/
-void IO_SCAN_SetInterruptHandler(void (* interruptHandler)(void)) 
-{
-    IO_SCAN_InterruptHandler = interruptHandler;
-}
-
-void IO_SCAN_DefaultInterruptHandler(void)
-{
-    // add your IO_SCAN interrupt custom code
-    // or set custom function using IO_SCAN_SetInterruptHandler()
-}
-/**
   Allows selecting an interrupt handler for IO_RESET at application runtime
 */
 void IO_RESET_SetInterruptHandler(void (* interruptHandler)(void)) 
@@ -209,6 +196,19 @@ void IO_RESET_DefaultInterruptHandler(void)
 {
     // add your IO_RESET interrupt custom code
     // or set custom function using IO_RESET_SetInterruptHandler()
+}
+/**
+  Allows selecting an interrupt handler for IO_SCAN at application runtime
+*/
+void IO_SCAN_SetInterruptHandler(void (* interruptHandler)(void)) 
+{
+    IO_SCAN_InterruptHandler = interruptHandler;
+}
+
+void IO_SCAN_DefaultInterruptHandler(void)
+{
+    // add your IO_SCAN interrupt custom code
+    // or set custom function using IO_SCAN_SetInterruptHandler()
 }
 /**
   Allows selecting an interrupt handler for IO_SS at application runtime
@@ -224,19 +224,6 @@ void IO_SS_DefaultInterruptHandler(void)
     // or set custom function using IO_SS_SetInterruptHandler()
 }
 /**
-  Allows selecting an interrupt handler for IO_RLED at application runtime
-*/
-void IO_RLED_SetInterruptHandler(void (* interruptHandler)(void)) 
-{
-    IO_RLED_InterruptHandler = interruptHandler;
-}
-
-void IO_RLED_DefaultInterruptHandler(void)
-{
-    // add your IO_RLED interrupt custom code
-    // or set custom function using IO_RLED_SetInterruptHandler()
-}
-/**
   Allows selecting an interrupt handler for IO_GLED at application runtime
 */
 void IO_GLED_SetInterruptHandler(void (* interruptHandler)(void)) 
@@ -248,6 +235,19 @@ void IO_GLED_DefaultInterruptHandler(void)
 {
     // add your IO_GLED interrupt custom code
     // or set custom function using IO_GLED_SetInterruptHandler()
+}
+/**
+  Allows selecting an interrupt handler for IO_RLED at application runtime
+*/
+void IO_RLED_SetInterruptHandler(void (* interruptHandler)(void)) 
+{
+    IO_RLED_InterruptHandler = interruptHandler;
+}
+
+void IO_RLED_DefaultInterruptHandler(void)
+{
+    // add your IO_RLED interrupt custom code
+    // or set custom function using IO_RLED_SetInterruptHandler()
 }
 ISR(PORTA_PORT_vect)
 { 
@@ -277,11 +277,11 @@ ISR(PORTC_PORT_vect)
     // Call the interrupt handler for the callback registered at runtime
     if(VPORTC.INTFLAGS & PORT_INT0_bm)
     {
-       IO_RLED_InterruptHandler(); 
+       IO_GLED_InterruptHandler(); 
     }
     if(VPORTC.INTFLAGS & PORT_INT1_bm)
     {
-       IO_GLED_InterruptHandler(); 
+       IO_RLED_InterruptHandler(); 
     }
     /* Clear interrupt flags */
     VPORTC.INTFLAGS = 0xff;
@@ -306,11 +306,11 @@ ISR(PORTF_PORT_vect)
     }
     if(VPORTF.INTFLAGS & PORT_INT0_bm)
     {
-       IO_SCAN_InterruptHandler(); 
+       IO_RESET_InterruptHandler(); 
     }
     if(VPORTF.INTFLAGS & PORT_INT1_bm)
     {
-       IO_RESET_InterruptHandler(); 
+       IO_SCAN_InterruptHandler(); 
     }
     /* Clear interrupt flags */
     VPORTF.INTFLAGS = 0xff;

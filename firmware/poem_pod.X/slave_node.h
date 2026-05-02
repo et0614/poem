@@ -27,23 +27,29 @@ extern "C" {
 #define I2C_ADDR_SCAN_LAST      0x77
 
 // 共通レジスタアドレス
-#define REG_DEVICE_ID           0x00    // uint32 R
-#define REG_ADDR_KEY            0x04    // uint8  W
-#define REG_NEW_ADDR            0x05    // uint8  R/W
-#define REG_DATA_COUNT          0x06    // uint8  R
-#define REG_UNIT_TYPE           0x08    // uint16[8] R
-#define REG_STATUS1             0x18    // uint8  R    (異常フラグ bitmask)
-#define REG_STATUS2             0x19    // uint8  R/W  (0=未了, 1=更新完了)
-#define REG_VALUE               0x1C    // float[8] R  (LE)
-#define REG_EXTENSION           0x3C    // 各子機固有 (親機は触らない)
+//
+// 静的情報 (INFO BLOCK, 走査時に 1 回読む) と動的情報 (POLL BLOCK, 毎周期読む) を
+// 連続領域に分離。Reserved はアラインメント (uint16 / float の偶/4byte 境界) 用。
+#define REG_DEVICE_ID           0x00    // uint32 R    : FNV-1a(SIGROW.SERNUM)
+#define REG_ADDR_KEY            0x04    // uint8  W    : アドレス変更鍵
+#define REG_NEW_ADDR            0x05    // uint8  R/W  : 新 I2C アドレス
+#define REG_DATA_COUNT          0x06    // uint8  R    : 有効計測値数
+                                         // 0x07         : reserved (uint16 整列用)
+#define REG_UNIT_TYPE           0x08    // uint16[8] R : BACnet 単位コード (LE)
+#define REG_NAME                0x18    // char[16] R/W: 装置ラベル (NUL 終端、EEPROM 永続)
+#define REG_STATUS1             0x28    // uint8  R    : 異常フラグ bitmask
+#define REG_STATUS2             0x29    // uint8  R/W  : 0=未了, 1=更新完了
+                                         // 0x2A-0x2B    : reserved (float 整列用)
+#define REG_VALUE               0x2C    // float[8] R  : 計測値 (LE)
+#define REG_EXTENSION           0x4C    // 各子機固有 (親機は触らない)
 
-// ステータス→バリュー部の一括読み取り長 (0x18~0x3B = 36 byte)
+// ステータス→バリュー部の一括読み取り長 (0x28~0x4B = 36 byte)
 #define POLL_BLOCK_OFFSET       REG_STATUS1
 #define POLL_BLOCK_LEN          36
 
-// 共通領域の固定情報 (DeviceID + 予約 + DataCount + 予約 + UnitType[8]) = 0x00~0x17 = 24 byte
+// 共通領域の固定情報 (DeviceID～UnitType + Name) = 0x00~0x27 = 40 byte
 #define INFO_BLOCK_OFFSET       REG_DEVICE_ID
-#define INFO_BLOCK_LEN          24
+#define INFO_BLOCK_LEN          40
 
 // シーケンス番号の特殊値: 親機がまだ一度も新値を観測していないことを示す
 #define SEQ_INITIAL             255
@@ -53,6 +59,10 @@ extern "C" {
 //   全計測値が信頼できないときは 0xFF を立てる慣例
 //   親機が子機を読めなかった場合も 0xFF として publish する
 #define STATUS1_ALL_STALE       0xFF
+
+// 子機名フィールドの長さ (15 文字 + NUL)。共通レジスタ仕様 (REG_NAME = 0x18) に
+// 16 byte 確保。子機側 EEPROM に永続化される。
+#define NODE_NAME_LEN           16
 
 // 親機側 RAM に保持する子機状態
 typedef struct {
@@ -64,6 +74,7 @@ typedef struct {
     uint8_t  status2;                           // 直近に読んだ Status2 (0/1)
     uint8_t  seq;                               // 親機管理シーケンス番号 (0~254、255=未計測)
     float    value[NODE_MAX_VALUES];            // 直近の計測値
+    char     name[NODE_NAME_LEN];               // Web 設定画面の表示用ラベル (5文字 + NUL)
 } slave_node_t;
 
 

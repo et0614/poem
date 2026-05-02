@@ -17,7 +17,7 @@ extern "C" {
 #include <stdbool.h>
 #include "W5500/MQTTClient.h"
 
-// MQTT 通信に使う TCP ソケット番号
+// MQTT 通信に使う TCP ソケット番号 (HTTP は socket 1)
 #define MQTT_TCP_SOCKET     0
 
 // MQTT 用ポート (ブローカー側)
@@ -28,6 +28,11 @@ extern "C" {
 
 // 親機グローバルの MQTT クライアント (内部状態保持)
 extern MQTTClient MA_Client;
+
+// W5500 をフル初期化する。SPI レジスタ設定後・モード分岐前に main から 1 度だけ呼ぶ。
+// 実体: wizchip_init (内蔵 TX/RX バッファサイズ) + ネットワーク情報 (MAC/IP/SN/GW/DNS) 投入。
+// HTTP モードでも MQTT モードでも必要なため、MA_connect とは別に分離している。
+void MA_initW5500(void);
 
 // ブローカーへ接続を試みる。MAC アドレス・IP・ブローカーIPは EM_Network_Settings を参照。
 // 戻り値: true = 接続成功 (MA_Client.isconnected が true)、false = 失敗。

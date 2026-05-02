@@ -10,6 +10,8 @@
 #define EEPROM_BASE_ADDR  0x1400
 
 // EEPROM レイアウト (native LE で保存)
+// Note: 既存 EEPROM (init_flag='T') との後方互換のため、name を末尾に追加。
+//       upgrade 時 name は 0xFF で埋まっているので、EM_loadEEPROM でサニタイズする。
 typedef struct {
     uint8_t init_flag;
     uint8_t reserved1;
@@ -17,6 +19,7 @@ typedef struct {
     float   coefficientA[5];
     float   coefficientB[5];
     uint8_t i2c_addr;
+    char    name[NODE_NAME_LEN];        // 装置ラベル (NUL 終端)
 } EepromMap;
 
 #define ADDR_INIT_FLAG      (EEPROM_BASE_ADDR + offsetof(EepromMap, init_flag))
@@ -24,6 +27,7 @@ typedef struct {
 #define ADDR_COEF_A         (EEPROM_BASE_ADDR + offsetof(EepromMap, coefficientA))
 #define ADDR_COEF_B         (EEPROM_BASE_ADDR + offsetof(EepromMap, coefficientB))
 #define ADDR_I2C_ADDR       (EEPROM_BASE_ADDR + offsetof(EepromMap, i2c_addr))
+#define ADDR_NAME           (EEPROM_BASE_ADDR + offsetof(EepromMap, name))
 
 // デフォルト設定
 #define DEFAULT_FILTER_CONFIG  (6)
@@ -36,6 +40,7 @@ static uint8_t last_filter_config;
 static uint8_t last_i2c_address;
 static float   last_coefficientA[5];
 static float   last_coefficientB[5];
+static char    last_name[NODE_NAME_LEN];
 
 // <editor-fold defaultstate="collapsed" desc="EEPROMブロック読み書き">
 
@@ -97,6 +102,16 @@ void EM_loadEEPROM()
     while (EEPROM_IsBusy());
     SharedMemory.reg.new_addr = EEPROM_Read(ADDR_I2C_ADDR);
     last_i2c_address = SharedMemory.reg.new_addr;
+
+    // 装置ラベル (旧バージョンからの upgrade では未初期化 = 0xFF が読まれる)
+    read_eep_block(last_name, ADDR_NAME, NODE_NAME_LEN);
+    if ((unsigned char)last_name[0] == 0xFF) {
+        memset(last_name, 0, NODE_NAME_LEN);
+    }
+    last_name[NODE_NAME_LEN - 1] = '\0';
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        memcpy((void*)SharedMemory.reg.name, last_name, NODE_NAME_LEN);
+    }
 }
 
 void EM_updateEEPROM()
@@ -138,6 +153,16 @@ void EM_updateEEPROM()
         while (EEPROM_IsBusy());
         EEPROM_Write(ADDR_I2C_ADDR, SharedMemory.reg.new_addr);
     }
+
+    // 装置ラベル
+    char currentName[NODE_NAME_LEN];
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        memcpy(currentName, (const void*)SharedMemory.reg.name, NODE_NAME_LEN);
+    }
+    if (memcmp(last_name, currentName, NODE_NAME_LEN) != 0) {
+        memcpy(last_name, currentName, NODE_NAME_LEN);
+        write_eep_block(last_name, ADDR_NAME, NODE_NAME_LEN);
+    }
 }
 
 void EM_resetEEPROM()
@@ -155,6 +180,10 @@ void EM_resetEEPROM()
     // I2C アドレス
     while (EEPROM_IsBusy());
     EEPROM_Write(ADDR_I2C_ADDR, DEFAULT_I2C_ADDRESS);
+
+    // 装置ラベル: 空文字 (NUL 16 byte)
+    char empty_name[NODE_NAME_LEN] = {0};
+    write_eep_block(empty_name, ADDR_NAME, NODE_NAME_LEN);
 }
 
 // </editor-fold>

@@ -3,7 +3,7 @@
  *
  * @file twi0.c
  *
- * @ingroup i2c_client
+ * @ingroup i2c_client_interrupt
  *
  * This file provides API implementation for the TWI0 driver.
  *
@@ -55,7 +55,7 @@ const i2c_client_interface_t I2C0_Client =
     .LastByteAckStatusGet = TWI0_LastByteAckStatusGet,
     .ErrorGet = TWI0_ErrorGet,
     .CallbackRegister = TWI0_CallbackRegister,
-    .Tasks = TWI0_Tasks
+    .Tasks = NULL
 };
 
 static volatile uint16_t twi0matchedAddress;
@@ -73,13 +73,13 @@ void TWI0_Initialize(void)
     TWI0.DBGCTRL = 0x0;
     
     // Client Address
-    TWI0.SADDR = 0x0;
+    TWI0.SADDR = 0x20;
     
     // ADDREN disabled; ADDRMASK 0x0; 
     TWI0.SADDRMASK = 0x0;
     
-    // APIEN false; DIEN false; ENABLE enabled; PIEN enabled; PMEN disabled; SMEN disabled; 
-    TWI0.SCTRLA = 0x21;
+    // APIEN enabled; DIEN enabled; ENABLE enabled; PIEN enabled; PMEN disabled; SMEN disabled; 
+    TWI0.SCTRLA = 0xE1;
     
     //ACKACT ACK; SCMD NOACT; 
     TWI0.SCTRLB = 0x0;
@@ -108,7 +108,7 @@ void TWI0_Deinitialize(void)
     // ADDREN disabled; ADDRMASK 0x0; 
     TWI0.SADDRMASK = 0x00;
     
-    // APIEN false; DIEN false; ENABLE enabled; PIEN enabled; PMEN disabled; SMEN disabled; 
+    // APIEN enabled; DIEN enabled; ENABLE enabled; PIEN enabled; PMEN disabled; SMEN disabled; 
     TWI0.SCTRLA = 0x00;
     
     // ACKACT ACK; SCMD NOACT; 
@@ -257,7 +257,31 @@ static void TWI0_EventHandler(void)
     }  
 }
 
-void TWI0_Tasks(void)
+/** 
+ * @misradeviation{@advisory,2.7} False positive - ISR is a pre-processor macro 
+ * defined in interrupt.h and is wrongly treated as a function by the CPP Checker.
+ * 
+ * @misradeviation{@required,8.2,@required,8.4} False positive - ISR is a pre-processor macro 
+ * defined in interrupt.h. The CPP Checker wrongly treats ISR as a function and expects 
+ * a declaration to be available.
+ *
+ * @misradeviation{@required,5.5} False positive - ISR is a pre-processor macro 
+ * defined in interrupt.h file provided by XC8 compiler and is redefined in utils/interrupt_avr.h 
+ * this file is out of scope for the MISRA check here but is considered by CPP Checker.
+ */
+/* cppcheck-suppress misra-c2012-2.7 */
+/* cppcheck-suppress misra-c2012-8.2 */
+/* cppcheck-suppress misra-c2012-8.4 */
+/**
+ * @ingroup i2c_client
+ * @brief Common Interrupt Service Routine (ISR) for all TWI0 interrupts. 
+ * Initialize TWI0 with TWI0_Initialize() before calling this API. \n
+ * This API calls the TWI0_ErrorEventHandler() if an error flag is set, else calls
+ * TWI0_EventHandler() for other TWI transmit and receive events.
+ * @param None.
+ * @return None. \n
+ */
+ISR(TWI0_TWIS_vect)
 {
     if((TWI0.SSTATUS & TWI_COLL_bm) || (TWI0.SSTATUS & TWI_BUSERR_bm))
     {

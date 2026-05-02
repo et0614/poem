@@ -133,43 +133,43 @@
 #define IO_PF2_EnableInterruptForLowLevelSensing() do { PORTF.PIN2CTRL = (PORTF.PIN2CTRL & ~PORT_ISC_gm) | 0x5 ; } while(0)
 #define PF2_SetInterruptHandler IO_PF2_SetInterruptHandler
 
-//get/set IO_SCAN aliases
-#define IO_SCAN_SetHigh() do { PORTF_OUTSET = 0x1; } while(0)
-#define IO_SCAN_SetLow() do { PORTF_OUTCLR = 0x1; } while(0)
-#define IO_SCAN_Toggle() do { PORTF_OUTTGL = 0x1; } while(0)
-#define IO_SCAN_GetValue() (VPORTF.IN & (0x1 << 0))
-#define IO_SCAN_SetDigitalInput() do { PORTF_DIRCLR = 0x1; } while(0)
-#define IO_SCAN_SetDigitalOutput() do { PORTF_DIRSET = 0x1; } while(0)
-#define IO_SCAN_SetPullUp() do { PORTF_PIN0CTRL  |= PORT_PULLUPEN_bm; } while(0)
-#define IO_SCAN_ResetPullUp() do { PORTF_PIN0CTRL  &= ~PORT_PULLUPEN_bm; } while(0)
-#define IO_SCAN_SetInverted() do { PORTF_PIN0CTRL  |= PORT_INVEN_bm; } while(0)
-#define IO_SCAN_ResetInverted() do { PORTF_PIN0CTRL  &= ~PORT_INVEN_bm; } while(0)
-#define IO_SCAN_DisableInterruptOnChange() do { PORTF.PIN0CTRL = (PORTF.PIN0CTRL & ~PORT_ISC_gm) | 0x0 ; } while(0)
-#define IO_SCAN_EnableInterruptForBothEdges() do { PORTF.PIN0CTRL = (PORTF.PIN0CTRL & ~PORT_ISC_gm) | 0x1 ; } while(0)
-#define IO_SCAN_EnableInterruptForRisingEdge() do { PORTF.PIN0CTRL = (PORTF.PIN0CTRL & ~PORT_ISC_gm) | 0x2 ; } while(0)
-#define IO_SCAN_EnableInterruptForFallingEdge() do { PORTF.PIN0CTRL = (PORTF.PIN0CTRL & ~PORT_ISC_gm) | 0x3 ; } while(0)
-#define IO_SCAN_DisableDigitalInputBuffer() do { PORTF.PIN0CTRL = (PORTF.PIN0CTRL & ~PORT_ISC_gm) | 0x4 ; } while(0)
-#define IO_SCAN_EnableInterruptForLowLevelSensing() do { PORTF.PIN0CTRL = (PORTF.PIN0CTRL & ~PORT_ISC_gm) | 0x5 ; } while(0)
-#define PF0_SetInterruptHandler IO_SCAN_SetInterruptHandler
-
 //get/set IO_RESET aliases
-#define IO_RESET_SetHigh() do { PORTF_OUTSET = 0x2; } while(0)
-#define IO_RESET_SetLow() do { PORTF_OUTCLR = 0x2; } while(0)
-#define IO_RESET_Toggle() do { PORTF_OUTTGL = 0x2; } while(0)
-#define IO_RESET_GetValue() (VPORTF.IN & (0x1 << 1))
-#define IO_RESET_SetDigitalInput() do { PORTF_DIRCLR = 0x2; } while(0)
-#define IO_RESET_SetDigitalOutput() do { PORTF_DIRSET = 0x2; } while(0)
-#define IO_RESET_SetPullUp() do { PORTF_PIN1CTRL  |= PORT_PULLUPEN_bm; } while(0)
-#define IO_RESET_ResetPullUp() do { PORTF_PIN1CTRL  &= ~PORT_PULLUPEN_bm; } while(0)
-#define IO_RESET_SetInverted() do { PORTF_PIN1CTRL  |= PORT_INVEN_bm; } while(0)
-#define IO_RESET_ResetInverted() do { PORTF_PIN1CTRL  &= ~PORT_INVEN_bm; } while(0)
-#define IO_RESET_DisableInterruptOnChange() do { PORTF.PIN1CTRL = (PORTF.PIN1CTRL & ~PORT_ISC_gm) | 0x0 ; } while(0)
-#define IO_RESET_EnableInterruptForBothEdges() do { PORTF.PIN1CTRL = (PORTF.PIN1CTRL & ~PORT_ISC_gm) | 0x1 ; } while(0)
-#define IO_RESET_EnableInterruptForRisingEdge() do { PORTF.PIN1CTRL = (PORTF.PIN1CTRL & ~PORT_ISC_gm) | 0x2 ; } while(0)
-#define IO_RESET_EnableInterruptForFallingEdge() do { PORTF.PIN1CTRL = (PORTF.PIN1CTRL & ~PORT_ISC_gm) | 0x3 ; } while(0)
-#define IO_RESET_DisableDigitalInputBuffer() do { PORTF.PIN1CTRL = (PORTF.PIN1CTRL & ~PORT_ISC_gm) | 0x4 ; } while(0)
-#define IO_RESET_EnableInterruptForLowLevelSensing() do { PORTF.PIN1CTRL = (PORTF.PIN1CTRL & ~PORT_ISC_gm) | 0x5 ; } while(0)
-#define PF1_SetInterruptHandler IO_RESET_SetInterruptHandler
+#define IO_RESET_SetHigh() do { PORTF_OUTSET = 0x1; } while(0)
+#define IO_RESET_SetLow() do { PORTF_OUTCLR = 0x1; } while(0)
+#define IO_RESET_Toggle() do { PORTF_OUTTGL = 0x1; } while(0)
+#define IO_RESET_GetValue() (VPORTF.IN & (0x1 << 0))
+#define IO_RESET_SetDigitalInput() do { PORTF_DIRCLR = 0x1; } while(0)
+#define IO_RESET_SetDigitalOutput() do { PORTF_DIRSET = 0x1; } while(0)
+#define IO_RESET_SetPullUp() do { PORTF_PIN0CTRL  |= PORT_PULLUPEN_bm; } while(0)
+#define IO_RESET_ResetPullUp() do { PORTF_PIN0CTRL  &= ~PORT_PULLUPEN_bm; } while(0)
+#define IO_RESET_SetInverted() do { PORTF_PIN0CTRL  |= PORT_INVEN_bm; } while(0)
+#define IO_RESET_ResetInverted() do { PORTF_PIN0CTRL  &= ~PORT_INVEN_bm; } while(0)
+#define IO_RESET_DisableInterruptOnChange() do { PORTF.PIN0CTRL = (PORTF.PIN0CTRL & ~PORT_ISC_gm) | 0x0 ; } while(0)
+#define IO_RESET_EnableInterruptForBothEdges() do { PORTF.PIN0CTRL = (PORTF.PIN0CTRL & ~PORT_ISC_gm) | 0x1 ; } while(0)
+#define IO_RESET_EnableInterruptForRisingEdge() do { PORTF.PIN0CTRL = (PORTF.PIN0CTRL & ~PORT_ISC_gm) | 0x2 ; } while(0)
+#define IO_RESET_EnableInterruptForFallingEdge() do { PORTF.PIN0CTRL = (PORTF.PIN0CTRL & ~PORT_ISC_gm) | 0x3 ; } while(0)
+#define IO_RESET_DisableDigitalInputBuffer() do { PORTF.PIN0CTRL = (PORTF.PIN0CTRL & ~PORT_ISC_gm) | 0x4 ; } while(0)
+#define IO_RESET_EnableInterruptForLowLevelSensing() do { PORTF.PIN0CTRL = (PORTF.PIN0CTRL & ~PORT_ISC_gm) | 0x5 ; } while(0)
+#define PF0_SetInterruptHandler IO_RESET_SetInterruptHandler
+
+//get/set IO_SCAN aliases
+#define IO_SCAN_SetHigh() do { PORTF_OUTSET = 0x2; } while(0)
+#define IO_SCAN_SetLow() do { PORTF_OUTCLR = 0x2; } while(0)
+#define IO_SCAN_Toggle() do { PORTF_OUTTGL = 0x2; } while(0)
+#define IO_SCAN_GetValue() (VPORTF.IN & (0x1 << 1))
+#define IO_SCAN_SetDigitalInput() do { PORTF_DIRCLR = 0x2; } while(0)
+#define IO_SCAN_SetDigitalOutput() do { PORTF_DIRSET = 0x2; } while(0)
+#define IO_SCAN_SetPullUp() do { PORTF_PIN1CTRL  |= PORT_PULLUPEN_bm; } while(0)
+#define IO_SCAN_ResetPullUp() do { PORTF_PIN1CTRL  &= ~PORT_PULLUPEN_bm; } while(0)
+#define IO_SCAN_SetInverted() do { PORTF_PIN1CTRL  |= PORT_INVEN_bm; } while(0)
+#define IO_SCAN_ResetInverted() do { PORTF_PIN1CTRL  &= ~PORT_INVEN_bm; } while(0)
+#define IO_SCAN_DisableInterruptOnChange() do { PORTF.PIN1CTRL = (PORTF.PIN1CTRL & ~PORT_ISC_gm) | 0x0 ; } while(0)
+#define IO_SCAN_EnableInterruptForBothEdges() do { PORTF.PIN1CTRL = (PORTF.PIN1CTRL & ~PORT_ISC_gm) | 0x1 ; } while(0)
+#define IO_SCAN_EnableInterruptForRisingEdge() do { PORTF.PIN1CTRL = (PORTF.PIN1CTRL & ~PORT_ISC_gm) | 0x2 ; } while(0)
+#define IO_SCAN_EnableInterruptForFallingEdge() do { PORTF.PIN1CTRL = (PORTF.PIN1CTRL & ~PORT_ISC_gm) | 0x3 ; } while(0)
+#define IO_SCAN_DisableDigitalInputBuffer() do { PORTF.PIN1CTRL = (PORTF.PIN1CTRL & ~PORT_ISC_gm) | 0x4 ; } while(0)
+#define IO_SCAN_EnableInterruptForLowLevelSensing() do { PORTF.PIN1CTRL = (PORTF.PIN1CTRL & ~PORT_ISC_gm) | 0x5 ; } while(0)
+#define PF1_SetInterruptHandler IO_SCAN_SetInterruptHandler
 
 //get/set IO_SS aliases
 #define IO_SS_SetHigh() do { PORTA_OUTSET = 0x80; } while(0)
@@ -190,43 +190,43 @@
 #define IO_SS_EnableInterruptForLowLevelSensing() do { PORTA.PIN7CTRL = (PORTA.PIN7CTRL & ~PORT_ISC_gm) | 0x5 ; } while(0)
 #define PA7_SetInterruptHandler IO_SS_SetInterruptHandler
 
-//get/set IO_RLED aliases
-#define IO_RLED_SetHigh() do { PORTC_OUTSET = 0x1; } while(0)
-#define IO_RLED_SetLow() do { PORTC_OUTCLR = 0x1; } while(0)
-#define IO_RLED_Toggle() do { PORTC_OUTTGL = 0x1; } while(0)
-#define IO_RLED_GetValue() (VPORTC.IN & (0x1 << 0))
-#define IO_RLED_SetDigitalInput() do { PORTC_DIRCLR = 0x1; } while(0)
-#define IO_RLED_SetDigitalOutput() do { PORTC_DIRSET = 0x1; } while(0)
-#define IO_RLED_SetPullUp() do { PORTC_PIN0CTRL  |= PORT_PULLUPEN_bm; } while(0)
-#define IO_RLED_ResetPullUp() do { PORTC_PIN0CTRL  &= ~PORT_PULLUPEN_bm; } while(0)
-#define IO_RLED_SetInverted() do { PORTC_PIN0CTRL  |= PORT_INVEN_bm; } while(0)
-#define IO_RLED_ResetInverted() do { PORTC_PIN0CTRL  &= ~PORT_INVEN_bm; } while(0)
-#define IO_RLED_DisableInterruptOnChange() do { PORTC.PIN0CTRL = (PORTC.PIN0CTRL & ~PORT_ISC_gm) | 0x0 ; } while(0)
-#define IO_RLED_EnableInterruptForBothEdges() do { PORTC.PIN0CTRL = (PORTC.PIN0CTRL & ~PORT_ISC_gm) | 0x1 ; } while(0)
-#define IO_RLED_EnableInterruptForRisingEdge() do { PORTC.PIN0CTRL = (PORTC.PIN0CTRL & ~PORT_ISC_gm) | 0x2 ; } while(0)
-#define IO_RLED_EnableInterruptForFallingEdge() do { PORTC.PIN0CTRL = (PORTC.PIN0CTRL & ~PORT_ISC_gm) | 0x3 ; } while(0)
-#define IO_RLED_DisableDigitalInputBuffer() do { PORTC.PIN0CTRL = (PORTC.PIN0CTRL & ~PORT_ISC_gm) | 0x4 ; } while(0)
-#define IO_RLED_EnableInterruptForLowLevelSensing() do { PORTC.PIN0CTRL = (PORTC.PIN0CTRL & ~PORT_ISC_gm) | 0x5 ; } while(0)
-#define PC0_SetInterruptHandler IO_RLED_SetInterruptHandler
-
 //get/set IO_GLED aliases
-#define IO_GLED_SetHigh() do { PORTC_OUTSET = 0x2; } while(0)
-#define IO_GLED_SetLow() do { PORTC_OUTCLR = 0x2; } while(0)
-#define IO_GLED_Toggle() do { PORTC_OUTTGL = 0x2; } while(0)
-#define IO_GLED_GetValue() (VPORTC.IN & (0x1 << 1))
-#define IO_GLED_SetDigitalInput() do { PORTC_DIRCLR = 0x2; } while(0)
-#define IO_GLED_SetDigitalOutput() do { PORTC_DIRSET = 0x2; } while(0)
-#define IO_GLED_SetPullUp() do { PORTC_PIN1CTRL  |= PORT_PULLUPEN_bm; } while(0)
-#define IO_GLED_ResetPullUp() do { PORTC_PIN1CTRL  &= ~PORT_PULLUPEN_bm; } while(0)
-#define IO_GLED_SetInverted() do { PORTC_PIN1CTRL  |= PORT_INVEN_bm; } while(0)
-#define IO_GLED_ResetInverted() do { PORTC_PIN1CTRL  &= ~PORT_INVEN_bm; } while(0)
-#define IO_GLED_DisableInterruptOnChange() do { PORTC.PIN1CTRL = (PORTC.PIN1CTRL & ~PORT_ISC_gm) | 0x0 ; } while(0)
-#define IO_GLED_EnableInterruptForBothEdges() do { PORTC.PIN1CTRL = (PORTC.PIN1CTRL & ~PORT_ISC_gm) | 0x1 ; } while(0)
-#define IO_GLED_EnableInterruptForRisingEdge() do { PORTC.PIN1CTRL = (PORTC.PIN1CTRL & ~PORT_ISC_gm) | 0x2 ; } while(0)
-#define IO_GLED_EnableInterruptForFallingEdge() do { PORTC.PIN1CTRL = (PORTC.PIN1CTRL & ~PORT_ISC_gm) | 0x3 ; } while(0)
-#define IO_GLED_DisableDigitalInputBuffer() do { PORTC.PIN1CTRL = (PORTC.PIN1CTRL & ~PORT_ISC_gm) | 0x4 ; } while(0)
-#define IO_GLED_EnableInterruptForLowLevelSensing() do { PORTC.PIN1CTRL = (PORTC.PIN1CTRL & ~PORT_ISC_gm) | 0x5 ; } while(0)
-#define PC1_SetInterruptHandler IO_GLED_SetInterruptHandler
+#define IO_GLED_SetHigh() do { PORTC_OUTSET = 0x1; } while(0)
+#define IO_GLED_SetLow() do { PORTC_OUTCLR = 0x1; } while(0)
+#define IO_GLED_Toggle() do { PORTC_OUTTGL = 0x1; } while(0)
+#define IO_GLED_GetValue() (VPORTC.IN & (0x1 << 0))
+#define IO_GLED_SetDigitalInput() do { PORTC_DIRCLR = 0x1; } while(0)
+#define IO_GLED_SetDigitalOutput() do { PORTC_DIRSET = 0x1; } while(0)
+#define IO_GLED_SetPullUp() do { PORTC_PIN0CTRL  |= PORT_PULLUPEN_bm; } while(0)
+#define IO_GLED_ResetPullUp() do { PORTC_PIN0CTRL  &= ~PORT_PULLUPEN_bm; } while(0)
+#define IO_GLED_SetInverted() do { PORTC_PIN0CTRL  |= PORT_INVEN_bm; } while(0)
+#define IO_GLED_ResetInverted() do { PORTC_PIN0CTRL  &= ~PORT_INVEN_bm; } while(0)
+#define IO_GLED_DisableInterruptOnChange() do { PORTC.PIN0CTRL = (PORTC.PIN0CTRL & ~PORT_ISC_gm) | 0x0 ; } while(0)
+#define IO_GLED_EnableInterruptForBothEdges() do { PORTC.PIN0CTRL = (PORTC.PIN0CTRL & ~PORT_ISC_gm) | 0x1 ; } while(0)
+#define IO_GLED_EnableInterruptForRisingEdge() do { PORTC.PIN0CTRL = (PORTC.PIN0CTRL & ~PORT_ISC_gm) | 0x2 ; } while(0)
+#define IO_GLED_EnableInterruptForFallingEdge() do { PORTC.PIN0CTRL = (PORTC.PIN0CTRL & ~PORT_ISC_gm) | 0x3 ; } while(0)
+#define IO_GLED_DisableDigitalInputBuffer() do { PORTC.PIN0CTRL = (PORTC.PIN0CTRL & ~PORT_ISC_gm) | 0x4 ; } while(0)
+#define IO_GLED_EnableInterruptForLowLevelSensing() do { PORTC.PIN0CTRL = (PORTC.PIN0CTRL & ~PORT_ISC_gm) | 0x5 ; } while(0)
+#define PC0_SetInterruptHandler IO_GLED_SetInterruptHandler
+
+//get/set IO_RLED aliases
+#define IO_RLED_SetHigh() do { PORTC_OUTSET = 0x2; } while(0)
+#define IO_RLED_SetLow() do { PORTC_OUTCLR = 0x2; } while(0)
+#define IO_RLED_Toggle() do { PORTC_OUTTGL = 0x2; } while(0)
+#define IO_RLED_GetValue() (VPORTC.IN & (0x1 << 1))
+#define IO_RLED_SetDigitalInput() do { PORTC_DIRCLR = 0x2; } while(0)
+#define IO_RLED_SetDigitalOutput() do { PORTC_DIRSET = 0x2; } while(0)
+#define IO_RLED_SetPullUp() do { PORTC_PIN1CTRL  |= PORT_PULLUPEN_bm; } while(0)
+#define IO_RLED_ResetPullUp() do { PORTC_PIN1CTRL  &= ~PORT_PULLUPEN_bm; } while(0)
+#define IO_RLED_SetInverted() do { PORTC_PIN1CTRL  |= PORT_INVEN_bm; } while(0)
+#define IO_RLED_ResetInverted() do { PORTC_PIN1CTRL  &= ~PORT_INVEN_bm; } while(0)
+#define IO_RLED_DisableInterruptOnChange() do { PORTC.PIN1CTRL = (PORTC.PIN1CTRL & ~PORT_ISC_gm) | 0x0 ; } while(0)
+#define IO_RLED_EnableInterruptForBothEdges() do { PORTC.PIN1CTRL = (PORTC.PIN1CTRL & ~PORT_ISC_gm) | 0x1 ; } while(0)
+#define IO_RLED_EnableInterruptForRisingEdge() do { PORTC.PIN1CTRL = (PORTC.PIN1CTRL & ~PORT_ISC_gm) | 0x2 ; } while(0)
+#define IO_RLED_EnableInterruptForFallingEdge() do { PORTC.PIN1CTRL = (PORTC.PIN1CTRL & ~PORT_ISC_gm) | 0x3 ; } while(0)
+#define IO_RLED_DisableDigitalInputBuffer() do { PORTC.PIN1CTRL = (PORTC.PIN1CTRL & ~PORT_ISC_gm) | 0x4 ; } while(0)
+#define IO_RLED_EnableInterruptForLowLevelSensing() do { PORTC.PIN1CTRL = (PORTC.PIN1CTRL & ~PORT_ISC_gm) | 0x5 ; } while(0)
+#define PC1_SetInterruptHandler IO_RLED_SetInterruptHandler
 
 /**
  * @ingroup  pinsdriver
@@ -343,27 +343,6 @@ void IO_PF2_SetInterruptHandler(void (* interruptHandler)(void)) ;
 
 /**
  * @ingroup  pinsdriver
- * @brief Default Interrupt Handler for IO_SCAN pin. 
- *        This is a predefined interrupt handler to be used together with the IO_SCAN_SetInterruptHandler() method.
- *        This handler is called every time the IO_SCAN ISR is executed. 
- * @pre PIN_MANAGER_Initialize() has been called at least once
- * @param none
- * @return none
- */
-void IO_SCAN_DefaultInterruptHandler(void);
-
-/**
- * @ingroup  pinsdriver
- * @brief Interrupt Handler Setter for IO_SCAN pin input-sense-config functionality.
- *        Allows selecting an interrupt handler for IO_SCAN at application runtime
- * @pre PIN_MANAGER_Initialize() has been called at least once
- * @param InterruptHandler function pointer.
- * @return none
- */
-void IO_SCAN_SetInterruptHandler(void (* interruptHandler)(void)) ; 
-
-/**
- * @ingroup  pinsdriver
  * @brief Default Interrupt Handler for IO_RESET pin. 
  *        This is a predefined interrupt handler to be used together with the IO_RESET_SetInterruptHandler() method.
  *        This handler is called every time the IO_RESET ISR is executed. 
@@ -382,6 +361,27 @@ void IO_RESET_DefaultInterruptHandler(void);
  * @return none
  */
 void IO_RESET_SetInterruptHandler(void (* interruptHandler)(void)) ; 
+
+/**
+ * @ingroup  pinsdriver
+ * @brief Default Interrupt Handler for IO_SCAN pin. 
+ *        This is a predefined interrupt handler to be used together with the IO_SCAN_SetInterruptHandler() method.
+ *        This handler is called every time the IO_SCAN ISR is executed. 
+ * @pre PIN_MANAGER_Initialize() has been called at least once
+ * @param none
+ * @return none
+ */
+void IO_SCAN_DefaultInterruptHandler(void);
+
+/**
+ * @ingroup  pinsdriver
+ * @brief Interrupt Handler Setter for IO_SCAN pin input-sense-config functionality.
+ *        Allows selecting an interrupt handler for IO_SCAN at application runtime
+ * @pre PIN_MANAGER_Initialize() has been called at least once
+ * @param InterruptHandler function pointer.
+ * @return none
+ */
+void IO_SCAN_SetInterruptHandler(void (* interruptHandler)(void)) ; 
 
 /**
  * @ingroup  pinsdriver
@@ -406,27 +406,6 @@ void IO_SS_SetInterruptHandler(void (* interruptHandler)(void)) ;
 
 /**
  * @ingroup  pinsdriver
- * @brief Default Interrupt Handler for IO_RLED pin. 
- *        This is a predefined interrupt handler to be used together with the IO_RLED_SetInterruptHandler() method.
- *        This handler is called every time the IO_RLED ISR is executed. 
- * @pre PIN_MANAGER_Initialize() has been called at least once
- * @param none
- * @return none
- */
-void IO_RLED_DefaultInterruptHandler(void);
-
-/**
- * @ingroup  pinsdriver
- * @brief Interrupt Handler Setter for IO_RLED pin input-sense-config functionality.
- *        Allows selecting an interrupt handler for IO_RLED at application runtime
- * @pre PIN_MANAGER_Initialize() has been called at least once
- * @param InterruptHandler function pointer.
- * @return none
- */
-void IO_RLED_SetInterruptHandler(void (* interruptHandler)(void)) ; 
-
-/**
- * @ingroup  pinsdriver
  * @brief Default Interrupt Handler for IO_GLED pin. 
  *        This is a predefined interrupt handler to be used together with the IO_GLED_SetInterruptHandler() method.
  *        This handler is called every time the IO_GLED ISR is executed. 
@@ -445,4 +424,25 @@ void IO_GLED_DefaultInterruptHandler(void);
  * @return none
  */
 void IO_GLED_SetInterruptHandler(void (* interruptHandler)(void)) ; 
+
+/**
+ * @ingroup  pinsdriver
+ * @brief Default Interrupt Handler for IO_RLED pin. 
+ *        This is a predefined interrupt handler to be used together with the IO_RLED_SetInterruptHandler() method.
+ *        This handler is called every time the IO_RLED ISR is executed. 
+ * @pre PIN_MANAGER_Initialize() has been called at least once
+ * @param none
+ * @return none
+ */
+void IO_RLED_DefaultInterruptHandler(void);
+
+/**
+ * @ingroup  pinsdriver
+ * @brief Interrupt Handler Setter for IO_RLED pin input-sense-config functionality.
+ *        Allows selecting an interrupt handler for IO_RLED at application runtime
+ * @pre PIN_MANAGER_Initialize() has been called at least once
+ * @param InterruptHandler function pointer.
+ * @return none
+ */
+void IO_RLED_SetInterruptHandler(void (* interruptHandler)(void)) ; 
 #endif /* PINS_H_INCLUDED */

@@ -54,10 +54,16 @@
 //
 //*****************************************************************************
 #include "socket.h"
+#include <avr/wdt.h>   // 長時間ブロックする状態遷移待ちで WDT を生かす
 
 //M20150401 : Typing Error
 //#define SOCK_ANY_PORT_NUM  0xC000;
 #define SOCK_ANY_PORT_NUM  0xC000
+
+// 状態遷移待ちループのソフトタイムアウト上限 (反復回数)。
+// 1 反復 ≒ 1 SPI レジスタ読み (約 5-10μs) + 分岐。20 万回で約 1-2 秒。
+// W5500 ハード TIMEOUT が立たないケース (ハング、想定外状態) に備える保険。
+#define SOCK_WAIT_MAX_ITER  200000UL
 
 static uint16_t sock_any_port = SOCK_ANY_PORT_NUM;
 static uint16_t sock_io_mode = 0;
@@ -191,9 +197,15 @@ int8_t socket(uint8_t sn, uint8_t protocol, uint16_t port, uint8_t flag)
    //sock_pack_info[sn] = 0;
    sock_pack_info[sn] = PACK_COMPLETED;
    //
-   while(getSn_SR(sn) == SOCK_CLOSED);
+   {
+      uint32_t iter = 0;
+      while(getSn_SR(sn) == SOCK_CLOSED) {
+         wdt_reset();
+         if (++iter > SOCK_WAIT_MAX_ITER) { close(sn); return SOCKERR_TIMEOUT; }
+      }
+   }
    return (int8_t)sn;
-}	   
+}
 
 int8_t close(uint8_t sn)
 {
@@ -277,20 +289,28 @@ int8_t connect(uint8_t sn, uint8_t * addr, uint16_t port)
 	setSn_CR(sn,Sn_CR_CONNECT);
    while(getSn_CR(sn));
    if(sock_io_mode & (1<<sn)) return SOCK_BUSY;
-   while(getSn_SR(sn) != SOCK_ESTABLISHED)
    {
-		if (getSn_IR(sn) & Sn_IR_TIMEOUT)
-		{
-			setSn_IR(sn, Sn_IR_TIMEOUT);
-            return SOCKERR_TIMEOUT;
-		}
+      uint32_t iter = 0;
+      while(getSn_SR(sn) != SOCK_ESTABLISHED)
+      {
+         wdt_reset();   // ARP/TCP ハンドシェイク待ち中も WDT を生かす
 
-		if (getSn_SR(sn) == SOCK_CLOSED)
-		{
-			return SOCKERR_SOCKCLOSED;
-		}
-	}
-   
+         if (getSn_IR(sn) & Sn_IR_TIMEOUT)
+         {
+            setSn_IR(sn, Sn_IR_TIMEOUT);
+            return SOCKERR_TIMEOUT;
+         }
+
+         if (getSn_SR(sn) == SOCK_CLOSED)
+         {
+            return SOCKERR_SOCKCLOSED;
+         }
+
+         // ハード TIMEOUT 割込が立たないケースの保険 (W5500 ハング等)
+         if (++iter > SOCK_WAIT_MAX_ITER) { close(sn); return SOCKERR_TIMEOUT; }
+      }
+   }
+
    return SOCK_OK;
 }
 
@@ -303,14 +323,22 @@ int8_t disconnect(uint8_t sn)
 	while(getSn_CR(sn));
 	sock_is_sending &= ~(1<<sn);
    if(sock_io_mode & (1<<sn)) return SOCK_BUSY;
-	while(getSn_SR(sn) != SOCK_CLOSED)
-	{
-	   if(getSn_IR(sn) & Sn_IR_TIMEOUT)
-	   {
-	      close(sn);
-	      return SOCKERR_TIMEOUT;
-	   }
-	}
+   {
+      uint32_t iter = 0;
+      while(getSn_SR(sn) != SOCK_CLOSED)
+      {
+         wdt_reset();   // FIN ハンドシェイク待ち中も WDT を生かす
+
+         if(getSn_IR(sn) & Sn_IR_TIMEOUT)
+         {
+            close(sn);
+            return SOCKERR_TIMEOUT;
+         }
+
+         // ハード TIMEOUT 割込が立たないケースの保険
+         if (++iter > SOCK_WAIT_MAX_ITER) { close(sn); return SOCKERR_TIMEOUT; }
+      }
+   }
 	return SOCK_OK;
 }
 
@@ -351,17 +379,24 @@ int32_t send(uint8_t sn, uint8_t * buf, uint16_t len)
    }
    freesize = getSn_TxMAX(sn);
    if (len > freesize) len = freesize; // check size not to exceed MAX size.
-   while(1)
    {
-      freesize = getSn_TX_FSR(sn);
-      tmp = getSn_SR(sn);
-      if ((tmp != SOCK_ESTABLISHED) && (tmp != SOCK_CLOSE_WAIT))
+      uint32_t iter = 0;
+      while(1)
       {
-         close(sn);
-         return SOCKERR_SOCKSTATUS;
+         wdt_reset();
+         freesize = getSn_TX_FSR(sn);
+         tmp = getSn_SR(sn);
+         if ((tmp != SOCK_ESTABLISHED) && (tmp != SOCK_CLOSE_WAIT))
+         {
+            close(sn);
+            return SOCKERR_SOCKSTATUS;
+         }
+         if( (sock_io_mode & (1<<sn)) && (len > freesize) ) return SOCK_BUSY;
+         if(len <= freesize) break;
+         // ハード TIMEOUT が立たない場合の保険 (相手が ACK しなくなった等で TX が
+         // ドレインしないままハングするケース)
+         if (++iter > SOCK_WAIT_MAX_ITER) { close(sn); return SOCKERR_TIMEOUT; }
       }
-      if( (sock_io_mode & (1<<sn)) && (len > freesize) ) return SOCK_BUSY;
-      if(len <= freesize) break;
    }
    wiz_send_data(sn, buf, len);
    #if _WIZCHIP_ == 5200

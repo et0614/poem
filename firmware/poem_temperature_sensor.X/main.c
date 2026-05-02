@@ -15,6 +15,7 @@
 #include "mcc_generated_files/system/system.h"
 #include "mcc_generated_files/system/pins.h"
 #include "mcc_generated_files/timer/rtc.h"
+#include "mcc_generated_files/i2c_host/twi1.h"
 
 #include "utility.h"
 #include "sht4x.h"
@@ -91,6 +92,9 @@ static void secHandler(void)
 int main(void)
 {
     SYSTEM_Initialize();
+
+    // SHT4x 用 TWI1 host の初期化 (MCC の SYSTEM_Initialize には含まれていない)
+    TWI1_Initialize();
 
     // EEPROM 読み込み (new_addr / coef_* が確定する)
     EM_loadEEPROM();

@@ -12,9 +12,8 @@
 extern "C" {
 #endif
     
-static void runHttpServerMode();
-
-static void runMqttClientMode();
+static void runHttpServerMode(void);
+static void runMqttClientMode(void);
 
 //以下はW5500コールバック関数**************************
 static void spi_cris_enter(void);

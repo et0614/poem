@@ -36,6 +36,12 @@ bool NM_pollOne(slave_node_t* node);
 // 戻り値: true = 成功、false = I²C 失敗。
 bool NM_clearStatus2(slave_node_t* node);
 
+// 子機の name レジスタ (0x18-0x27) を更新する。子機側 EEPROM へ自動的に永続化される。
+// 同時にローカル cache (node->name) も更新する。new_name は NUL 終端文字列で、
+// NODE_NAME_LEN-1 文字以降は切り捨てられる。
+// 戻り値: true = I²C 書き込み成功、false = 失敗。
+bool NM_writeName(slave_node_t* node, const char* new_name);
+
 // MQTT トピック生成ヘルパ。"nodes/config/{8桁hex}" / "nodes/data/{8桁hex}"。
 // buf には 24 byte 程度を確保すれば十分 (例: "nodes/config/12345678" は 21 文字 + NUL)。
 void NM_buildConfigTopic(const slave_node_t* node, char* buf, uint16_t bufsize);

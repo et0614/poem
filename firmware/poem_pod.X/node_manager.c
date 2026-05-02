@@ -13,7 +13,7 @@ void NM_init(void)
     memset(NM_Nodes, 0, sizeof(NM_Nodes));
 }
 
-// 指定した I²C アドレスの子機から共通領域の固定情報 (0x00~0x17) を読み取り、
+// 指定した I²C アドレスの子機から共通領域の固定情報 (INFO BLOCK 0x00~0x27) を読み取り、
 // node に格納する。検出と同時に呼ばれる前提で、status/value はゼロ初期化のまま、
 // seq は SEQ_INITIAL に設定する。
 static bool readInfoBlock(uint8_t i2c_addr, slave_node_t* node)
@@ -42,12 +42,32 @@ static bool readInfoBlock(uint8_t i2c_addr, slave_node_t* node)
         node->unit_type[i] = ((uint16_t)buf[off]) | (((uint16_t)buf[off + 1]) << 8);
     }
 
+    // 0x18~0x27: Name (char[16], NUL 終端)
+    memcpy(node->name, &buf[REG_NAME - INFO_BLOCK_OFFSET], NODE_NAME_LEN);
+    node->name[NODE_NAME_LEN - 1] = '\0';
+    // EEPROM 未初期化 (0xFF) を空文字扱いにする
+    if ((unsigned char)node->name[0] == 0xFF) node->name[0] = '\0';
+
     // 計測関連は未取得状態で初期化
     node->status1 = 0;
     node->status2 = 0;
     node->seq     = SEQ_INITIAL;
     memset(node->value, 0, sizeof(node->value));
 
+    return true;
+}
+
+bool NM_writeName(slave_node_t* node, const char* new_name)
+{
+    uint8_t payload[1 + NODE_NAME_LEN];
+    payload[0] = REG_NAME;
+    memset(&payload[1], 0, NODE_NAME_LEN);
+    strncpy((char*)&payload[1], new_name, NODE_NAME_LEN - 1);
+
+    if (!I2C_Write(node->i2c_addr, payload, sizeof(payload))) return false;
+
+    // ローカル cache を同期
+    memcpy(node->name, &payload[1], NODE_NAME_LEN);
     return true;
 }
 
@@ -128,8 +148,8 @@ uint16_t NM_buildConfigJson(const slave_node_t* node, char* buf, uint16_t bufsiz
     char* end = buf + bufsize;
     int   n;
 
-    n = snprintf(p, end - p, "{\"id\":\"%08lX\",\"cnt\":%u,\"u\":[",
-                 (unsigned long)node->device_id, (unsigned)node->data_count);
+    n = snprintf(p, end - p, "{\"id\":\"%08lX\",\"name\":\"%s\",\"cnt\":%u,\"u\":[",
+                 (unsigned long)node->device_id, node->name, (unsigned)node->data_count);
     if (n < 0 || n >= end - p) return 0;
     p += n;
 

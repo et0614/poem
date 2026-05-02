@@ -9,14 +9,17 @@
 #define EEPROM_BASE_ADDR  0x1400
 
 // EEPROM レイアウト (native LE で保存)
+// Note: 既存 EEPROM (init_flag='T') との後方互換のため、name を末尾に追加。
+//       upgrade 時 name は 0xFF で埋まっているので、EM_loadEEPROM でサニタイズする。
 typedef struct {
-    uint8_t init_flag;       // 'T' なら初期化済み
-    uint8_t i2c_addr;        // I2C アドレス
-    uint8_t reserved[2];     // 4byte alignment
+    uint8_t init_flag;                  // 'T' なら初期化済み
+    uint8_t i2c_addr;                   // I2C アドレス
+    uint8_t reserved[2];                // 4byte alignment
     float   temp_coef_a;
     float   temp_coef_b;
     float   humi_coef_a;
     float   humi_coef_b;
+    char    name[NODE_NAME_LEN];        // 装置ラベル (NUL 終端)
 } EepromMap;
 
 #define ADDR_INIT_FLAG    (EEPROM_BASE_ADDR + offsetof(EepromMap, init_flag))
@@ -25,6 +28,7 @@ typedef struct {
 #define ADDR_TEMP_COEF_B  (EEPROM_BASE_ADDR + offsetof(EepromMap, temp_coef_b))
 #define ADDR_HUMI_COEF_A  (EEPROM_BASE_ADDR + offsetof(EepromMap, humi_coef_a))
 #define ADDR_HUMI_COEF_B  (EEPROM_BASE_ADDR + offsetof(EepromMap, humi_coef_b))
+#define ADDR_NAME         (EEPROM_BASE_ADDR + offsetof(EepromMap, name))
 
 // デフォルト値
 #define DEFAULT_I2C_ADDRESS    (0x10)
@@ -37,6 +41,7 @@ static float   last_temp_coef_a;
 static float   last_temp_coef_b;
 static float   last_humi_coef_a;
 static float   last_humi_coef_b;
+static char    last_name[NODE_NAME_LEN];
 
 // <editor-fold defaultstate="collapsed" desc="EEPROMブロック読み書き">
 
@@ -96,6 +101,16 @@ void EM_loadEEPROM(void)
         SharedMemory.reg.humi_coef_a = last_humi_coef_a;
         SharedMemory.reg.humi_coef_b = last_humi_coef_b;
     }
+
+    // 装置ラベル (旧バージョンからの upgrade では未初期化 = 0xFF が読まれる)
+    read_eep_block(last_name, ADDR_NAME, NODE_NAME_LEN);
+    if ((unsigned char)last_name[0] == 0xFF) {
+        memset(last_name, 0, NODE_NAME_LEN);
+    }
+    last_name[NODE_NAME_LEN - 1] = '\0';
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        memcpy((void*)SharedMemory.reg.name, last_name, NODE_NAME_LEN);
+    }
 }
 
 void EM_updateEEPROM(void)
@@ -133,6 +148,16 @@ void EM_updateEEPROM(void)
         last_humi_coef_b = currentVals[3];
         write_eep_block(&last_humi_coef_b, ADDR_HUMI_COEF_B, sizeof(float));
     }
+
+    // 装置ラベル
+    char currentName[NODE_NAME_LEN];
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        memcpy(currentName, (const void*)SharedMemory.reg.name, NODE_NAME_LEN);
+    }
+    if (memcmp(last_name, currentName, NODE_NAME_LEN) != 0) {
+        memcpy(last_name, currentName, NODE_NAME_LEN);
+        write_eep_block(last_name, ADDR_NAME, NODE_NAME_LEN);
+    }
 }
 
 void EM_resetEEPROM(void)
@@ -148,6 +173,10 @@ void EM_resetEEPROM(void)
     write_eep_block(&def_b, ADDR_TEMP_COEF_B, sizeof(float));
     write_eep_block(&def_a, ADDR_HUMI_COEF_A, sizeof(float));
     write_eep_block(&def_b, ADDR_HUMI_COEF_B, sizeof(float));
+
+    // 装置ラベル: 空文字 (NUL 16 byte)
+    char empty_name[NODE_NAME_LEN] = {0};
+    write_eep_block(empty_name, ADDR_NAME, NODE_NAME_LEN);
 }
 
 // </editor-fold>

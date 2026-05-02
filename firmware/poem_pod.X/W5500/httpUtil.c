@@ -16,6 +16,7 @@
 
 #include <avr/pgmspace.h>
 #include "../eeprom_manager.h"
+#include "../node_manager.h"
 #include "../utility.h"
 
 uint8_t http_get_cgi_handler(uint8_t * uri_name, uint8_t * buf, uint32_t * file_len)
@@ -66,51 +67,151 @@ uint8_t http_post_cgi_handler(uint8_t * uri_name, st_http_request * p_http_reque
 // 戻り値: 1=処理した (buf 有効, *len 設定済み)、0=未処理 (上位で HTTP_FAILED にする)。
 uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * buf, uint16_t * len)
 {
-    if (strcmp((const char *)uri_name, "net.cgi") != 0) {
-        return 0;
+    if (strcmp((const char *)uri_name, "net.cgi") == 0) {
+        const EM_NetworkSettings* s = &EM_Network_Settings;
+        int written = snprintf((char*)buf, CGI_BUF_SIZE,
+            "<!DOCTYPE html><html><head><title>PoEM-pod Network Settings</title>"
+            "<style>"
+            "body{font-family:sans-serif;width:430px;margin:10px auto;font-size:14px}"
+            "label,p{margin:8px 0;display:block}"
+            "input[type=text]{width:200px;padding:3px}"
+            "input[type=submit]{padding:5px 15px;margin-top:8px}"
+            "h3{margin:8px 0 4px}"
+            "</style></head><body>"
+            "<h3>Network</h3>"
+            "<form method=post action=/net.cgi>"
+            "<label>IP: <input type=text name=ip value=%u.%u.%u.%u></label>"
+            "<label>SN: <input type=text name=sn value=%u.%u.%u.%u></label>"
+            "<label>GW: <input type=text name=gw value=%u.%u.%u.%u></label>"
+            "<label>DNS: <input type=text name=dns value=%u.%u.%u.%u></label>"
+            "<h3>MQTT</h3>"
+            "<label>Broker IP: <input type=text name=bip value=%u.%u.%u.%u></label>"
+            "<label>Topic suffix: <input type=text name=topic value=%s maxlength=20></label>"
+            "<p><input type=submit value=Save></p>"
+            "</form>"
+            "<p><a href=/>Back</a></p>"
+            "</body></html>",
+            s->ip[0],  s->ip[1],  s->ip[2],  s->ip[3],
+            s->sn[0],  s->sn[1],  s->sn[2],  s->sn[3],
+            s->gw[0],  s->gw[1],  s->gw[2],  s->gw[3],
+            s->dns[0], s->dns[1], s->dns[2], s->dns[3],
+            s->bip[0], s->bip[1], s->bip[2], s->bip[3],
+            s->topic_suffix);
+
+        if (written < 0 || written >= CGI_BUF_SIZE) { *len = 0; return 0; }
+        *len = (uint16_t)written;
+        return 1;
     }
 
-    const EM_NetworkSettings* s = &EM_Network_Settings;
+    // /scan.cgi GET: I²C 全走査をその場で実行し、devices.cgi にリダイレクト。
+    if (strcmp((const char *)uri_name, "scan.cgi") == 0) {
+        NM_scan();
+        int written = snprintf((char*)buf, CGI_BUF_SIZE,
+            "<!DOCTYPE html><html><head>"
+            "<meta http-equiv=refresh content=\"1;url=/devices.cgi\">"
+            "<title>Scanning</title></head><body>"
+            "<p>I2C scan complete (%u devices found). Redirecting...</p>"
+            "</body></html>",
+            (unsigned)NM_NodeCount);
+        if (written < 0 || written >= CGI_BUF_SIZE) { *len = 0; return 0; }
+        *len = (uint16_t)written;
+        return 1;
+    }
+
+    // /devices.cgi GET: 検出済み子機一覧をテーブル + 名前編集フォームで返す。
+    if (strcmp((const char *)uri_name, "devices.cgi") == 0) {
+        char* p   = (char*)buf;
+        char* end = (char*)buf + CGI_BUF_SIZE;
+        int n;
+
+        n = snprintf(p, end - p,
+            "<!DOCTYPE html><html><head><title>PoEM-pod Devices</title>"
+            "<style>"
+            "body{font-family:sans-serif;width:480px;margin:10px auto;font-size:13px}"
+            "table{border-collapse:collapse;width:100%%}"
+            "th,td{padding:2px 6px;border-bottom:1px solid #ddd;text-align:left}"
+            "th{background:#eee}"
+            "input[type=text]{width:60px;padding:2px}"
+            "input[type=submit],a.btn{padding:4px 12px;margin:8px 4px 0 0;display:inline-block}"
+            "</style></head><body>"
+            "<h3>Detected Devices (%u)</h3>"
+            "<form method=post action=/devices.cgi>"
+            "<table><tr><th>#<th>Addr<th>DeviceID<th>St1<th>N<th>Name</tr>",
+            (unsigned)NM_NodeCount);
+        if (n < 0 || n >= end - p) { *len = 0; return 0; }
+        p += n;
+
+        // 子機テーブル本体。バッファ残量を見て途中で切る (オーバーフロー防止)。
+        for (uint8_t i = 0; i < NM_NodeCount; i++) {
+            if ((end - p) < 220) break;  // 残り 220 byte 切ったらフォーム閉じへ
+            const slave_node_t* nd = &NM_Nodes[i];
+            n = snprintf(p, end - p,
+                "<tr><td>%u<td>0x%02X<td>%08lX<td>0x%02X<td>%u"
+                "<td><input type=text name=n%u value=\"%s\" maxlength=15></tr>",
+                (unsigned)i, (unsigned)nd->i2c_addr, (unsigned long)nd->device_id,
+                (unsigned)nd->status1, (unsigned)nd->data_count,
+                (unsigned)i, nd->name);
+            if (n < 0 || n >= end - p) break;
+            p += n;
+        }
+
+        n = snprintf(p, end - p,
+            "</table>"
+            "<p><input type=submit value=\"Save Names\">"
+            "<a class=btn href=/scan.cgi>Rescan I2C</a>"
+            "<a class=btn href=/>Back</a></p>"
+            "</form></body></html>");
+        if (n < 0 || n >= end - p) { *len = 0; return 0; }
+        p += n;
+
+        *len = (uint16_t)(p - (char*)buf);
+        return 1;
+    }
+
+    return 0;
+}
+
+// /devices.cgi POST: フォームから来た name を子機 (REG_NAME) へ I²C で書き戻す。
+// 子機側で EEPROM に永続化される。各子機の name は ?n0=...&n1=... の形で来る。
+// 変更がない子機は I²C を発行せずスキップ。
+static uint8_t process_devices_post(uint8_t * uri, uint8_t * buf, uint16_t * len)
+{
+    char param_name[6];        // "n63\0" 程度
+    char new_name[NODE_NAME_LEN];
+
+    for (uint8_t i = 0; i < NM_NodeCount; i++) {
+        snprintf(param_name, sizeof(param_name), "n%u", (unsigned)i);
+        uint8_t* val = get_http_param_value((char*)uri, param_name);
+        if (!val) continue;
+
+        // 入力を NODE_NAME_LEN-1 文字に切り詰めて NUL 終端
+        memset(new_name, 0, NODE_NAME_LEN);
+        strncpy(new_name, (char*)val, NODE_NAME_LEN - 1);
+
+        // 既存名と同じならスキップ (I²C と EEPROM の摩耗回避)
+        if (memcmp(NM_Nodes[i].name, new_name, NODE_NAME_LEN) == 0) continue;
+
+        // 子機 EEPROM へ永続化 (失敗しても他ノード処理は継続)
+        NM_writeName(&NM_Nodes[i], new_name);
+    }
+
     int written = snprintf((char*)buf, CGI_BUF_SIZE,
-        "<!DOCTYPE html><html><head><title>PoEM-pod Network Settings</title>"
-        "<style>"
-        "body{font-family:sans-serif;width:430px;margin:10px auto;font-size:14px}"
-        "label,p{margin:8px 0;display:block}"
-        "input[type=text]{width:200px;padding:3px}"
-        "input[type=submit]{padding:5px 15px;margin-top:8px}"
-        "h3{margin:8px 0 4px}"
-        "</style></head><body>"
-        "<h3>Network</h3>"
-        "<form method=post action=/net.cgi>"
-        "<label>IP: <input type=text name=ip value=%u.%u.%u.%u></label>"
-        "<label>SN: <input type=text name=sn value=%u.%u.%u.%u></label>"
-        "<label>GW: <input type=text name=gw value=%u.%u.%u.%u></label>"
-        "<label>DNS: <input type=text name=dns value=%u.%u.%u.%u></label>"
-        "<h3>MQTT</h3>"
-        "<label>Broker IP: <input type=text name=bip value=%u.%u.%u.%u></label>"
-        "<label>Topic suffix: <input type=text name=topic value=%s maxlength=20></label>"
-        "<p><input type=submit value=Save></p>"
-        "</form>"
-        "</body></html>",
-        s->ip[0],  s->ip[1],  s->ip[2],  s->ip[3],
-        s->sn[0],  s->sn[1],  s->sn[2],  s->sn[3],
-        s->gw[0],  s->gw[1],  s->gw[2],  s->gw[3],
-        s->dns[0], s->dns[1], s->dns[2], s->dns[3],
-        s->bip[0], s->bip[1], s->bip[2], s->bip[3],
-        s->topic_suffix);
-
-    if (written < 0 || written >= CGI_BUF_SIZE) {
-        *len = 0;
-        return 0;
-    }
+        "<!DOCTYPE html><html><head><title>Saved</title>"
+        "<meta http-equiv=refresh content=\"1;url=/devices.cgi\">"
+        "</head><body><p>Names saved. Redirecting...</p></body></html>");
+    if (written < 0 || written >= CGI_BUF_SIZE) { *len = 0; return HTTP_FAILED; }
     *len = (uint16_t)written;
-    return 1;
+    return HTTP_OK;
 }
 
 // /net.cgi POST: フォームから送られた IP/SN/GW/DNS/BrokerIP/Topic を反映して EEPROM 更新。
 // 反映後はリダイレクト用の小さな HTML を返す。
 uint8_t predefined_set_cgi_processor(uint8_t * uri_name, uint8_t * uri, uint8_t * buf, uint16_t * len)
 {
+    if (strcmp((const char *)uri_name, "devices.cgi") == 0) {
+        return process_devices_post(uri, buf, len);
+    }
+
     if (strcmp((const char *)uri_name, "net.cgi") != 0) {
         return HTTP_FAILED;
     }

@@ -40,15 +40,19 @@ const char index_page_content[] =
 "<h1>Configuration Menu</h1>"
 "<ul>"
 "<li><a href=\"/net.cgi\">Network Settings</a></li>"
+"<li><a href=\"/devices.cgi\">Devices</a></li>"
 "</ul>"
 "</body>"
 "</html>";
 
-//初期化中フラグ
+//初期化中フラグ。Reset スイッチ押し込み起動なら true → HTTP 設定モード。
 volatile bool isInitMode = true;
 
 // 1秒ごとに立つ MQTT 送信要求フラグ。RTC OVF で true に。
 volatile bool g_publish_request = false;
+
+// MilliTimer は mqtt_interface.c のグローバル (1ms 毎にインクリメント)
+extern unsigned long MilliTimer;
 
 
 // 1msecごとのコールバック関数
@@ -112,32 +116,15 @@ int main(void)
     //割り込み再開
 	sei();
 
-    //Resetスイッチ押し込み中の場合には初期設定モードへ
-	isInitMode = IO_RESET_GetValue();
-	
-	//モード切り分け
-	if(isInitMode) runMqttClientMode();
-	else runHttpServerMode(); 
-}
+    //W5500 のフル初期化 (wizchip_init + ネットワーク情報投入)。
+    MA_initW5500();
 
-static void runHttpServerMode(){
-	uint8_t g_http_socklist[] = {1}; // HTTPソケット
-		
-	//HTTPサーバー初期化
-	uint8_t http_tx_buff[HTTP_BUF_SIZE];
-	uint8_t http_rx_buff[HTTP_BUF_SIZE];
-	httpServer_init(http_tx_buff, http_rx_buff, 1, g_http_socklist);
-	// httpServerにリセット関数を登録する
-	//reg_httpServer_cbfunc(mcu_reset, NULL); // 第2引数はWDTリセット用だが今回は未使用
-	//ページを登録
-	reg_httpServer_webContent((uint8_t *)"index.html", (uint8_t *)index_page_content);
-	//初期化モードの場合は赤LED点灯
-	turnOnRedLED();
-	
-	while(true) {
-		httpServer_run(g_http_socklist[0]);
-		wdt_reset();
-	}
+    //Resetスイッチ押し込み中 (= GND) の場合には初期設定 (HTTP) モードへ。
+    //それ以外は MQTT 通信モード (本番運用)。
+    isInitMode = (IO_RESET_GetValue() == 0);
+
+    if (isInitMode) runHttpServerMode();
+    else            runMqttClientMode();
 }
 
 // SCAN ボタン (IO_SCAN, PF0、プルアップ → 押下で Low) のエッジ検出。
@@ -214,11 +201,39 @@ static void pollAndPublishOne(slave_node_t* node)
     }
 }
 
+// HTTP 設定モード: Reset スイッチ押し込み起動時のみ動作。Web 設定 UI を提供する。
+// MQTT は走らせない (HTTP と並走させると W5500 のソケット混線が発生するため)。
+static void runHttpServerMode(void)
+{
+    uint8_t http_socklist[] = {1};
+
+    // HTTP バッファはこのモード中のみスタックに確保 (運用モードでは使わない)
+    static uint8_t http_tx_buf[HTTP_BUF_SIZE];
+    static uint8_t http_rx_buf[HTTP_BUF_SIZE];
+
+    NM_init();   // /scan.cgi で書き込めるように初期化
+
+    httpServer_init(http_tx_buf, http_rx_buf, 1, http_socklist);
+    reg_httpServer_webContent((uint8_t *)"index.html", (uint8_t *)index_page_content);
+
+    turnOnRedLED();    // 設定モード中は赤 LED 常時点灯
+    turnOffGreenLED();
+
+    while (true) {
+        wdt_reset();
+        httpServer_run(http_socklist[0]);
+    }
+}
+
+// MQTT 通信モード: 通常起動 (Reset 非押下) 時の本番運用。
+//   - 起動後ブローカへ接続。失敗中は赤 LED が 2 回点滅で通知。
+//   - 1 秒周期で全子機を I²C ポーリング → MQTT publish。完了で緑 LED 1 回点滅。
+//   - SCAN ボタンで子機再走査 + config 再送信 (緑 LED 点滅で通知)。
 static void runMqttClientMode(void)
 {
     NM_init();
 
-    // 初回接続試行 (失敗中は赤 LED 点滅で外部から状況がわかるように)
+    // 初回接続: 成功するまでブロック (赤 LED 2 回点滅で外部に状況通知)
     while (!MA_connect()) {
         blinkRedLED(2);
         DELAY_milliseconds(2000);
@@ -228,7 +243,7 @@ static void runMqttClientMode(void)
     while (true) {
         wdt_reset();
 
-        // MQTT 接続が落ちていたら再接続
+        // 接続切れ → 復帰待ちループ (赤 LED 3 回点滅)
         if (!MA_isConnected()) {
             MA_disconnect();
             while (!MA_connect()) {
@@ -238,10 +253,10 @@ static void runMqttClientMode(void)
             }
         }
 
-        // keepalive
+        // MQTT keepalive 兼 受信処理
         MA_yield(10);
 
-        // SCAN ボタン: 子機の再走査と config 再送信
+        // SCAN ボタン: 子機の再走査 + config 再送信
         if (scanButtonPressed()) {
             handleScanRequest();
         }
@@ -249,13 +264,11 @@ static void runMqttClientMode(void)
         // 1 秒タイマー: 全子機ポーリング → publish
         if (g_publish_request) {
             g_publish_request = false;
-
             for (uint8_t i = 0; i < NM_NodeCount; i++) {
                 pollAndPublishOne(&NM_Nodes[i]);
                 wdt_reset();
             }
-
-            blinkGreenLED(1); // 1 周期ぶんの publish 完了通知
+            blinkGreenLED(1);   // 1 周期分の publish 完了通知
         }
     }
 }

@@ -13,7 +13,8 @@ extern "C" {
 #endif
 
 // HTTP Server debug message enable
-#define _HTTPSERVER_DEBUG_
+// printf を AVR ターゲットで使うと stdout 未設定で詰まる可能性があるので無効化
+//#define _HTTPSERVER_DEBUG_
 
 #define INITIAL_WEBPAGE				"index.html"
 #define M_INITIAL_WEBPAGE			"m/index.html"
