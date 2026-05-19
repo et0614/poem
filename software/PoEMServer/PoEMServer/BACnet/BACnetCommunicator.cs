@@ -56,7 +56,7 @@ namespace BaCSharp
     /// <summary>インスタンスを初期化する</summary>
     /// <param name="storage"></param>
     /// <param name="exclusivePort"></param>
-    public BACnetCommunicator(DeviceStorage storage, int bacPort, string localEndPointIP)
+    public BACnetCommunicator(DeviceStorage storage, int exclusivePort, string localEndPointIP)
     {
       m_storage = storage;
 
@@ -65,11 +65,13 @@ namespace BaCSharp
       m_storage.ReadOverride += new DeviceStorage.ReadOverrideHandler(m_storage_ReadOverride);
 
       //BACnetClientを作成
-      BacnetIpUdpProtocolTransport bUDP;
+      BacnetIpUdpProtocolTransport bUDP = new BacnetIpUdpProtocolTransport(
+        0xBAC0, exclusivePort, false, 1472, localEndPointIP);
+      //BacnetIpUdpProtocolTransport bUDP;
       //標準ポートの場合には排他的に0xBAC0（47808）を使えると仮定
-      if (bacPort == 0xBAC0) bUDP = new BacnetIpUdpProtocolTransport(0xBAC0, true, false, 1472, localEndPointIP);
+      //if (bacPort == 0xBAC0) bUDP = new BacnetIpUdpProtocolTransport(0xBAC0, true, false, 1472, localEndPointIP);
       //それ以外のポートの場合には排他的に使えないと仮定し、ブロードキャスト用の0xBAC0と他の排他的ポートを組み合わせる
-      else bUDP = new BacnetIpUdpProtocolTransport(0xBAC0, bacPort, false, 1472, localEndPointIP);
+      //else bUDP = new BacnetIpUdpProtocolTransport(0xBAC0, bacPort, false, 1472, localEndPointIP);
       //2025.11.28修正：常に排他的に使う設定とする
       //bUDP = new BacnetIpUdpProtocolTransport(0xBAC0, bacPort, false, 1472, localEndPointIP);
 
