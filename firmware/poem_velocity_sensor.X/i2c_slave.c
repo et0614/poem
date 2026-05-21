@@ -119,9 +119,12 @@ bool I2C_Slave_Callback(i2c_client_transfer_event_t event)
 
         // 通信終了 (Stop Bit)***************************
         case I2C_CLIENT_TRANSFER_EVENT_STOP_BIT_RECEIVED:
-            // アドレス変更が確定 (鍵 + 新アドレス書込) されていれば EEPROM に反映
+            // アドレス変更が確定 (鍵 + 新アドレス書込) されていれば EEPROM 永続化 +
+            // TWI0.SADDR 即時反映。次のトランザクションから新アドレスで応答する。
+            // (リセット不要のシームレス切替)
             if (addr_changed_flag && SharedMemory.reg.addr_key == ADDR_KEY_UNLOCK) {
                 EM_updateEEPROM();
+                TWI0.SADDR = SharedMemory.reg.new_addr << 1;
             }
             // 鍵をクリア (1トランザクション内でのみ有効)
             SharedMemory.reg.addr_key = 0x00;

@@ -90,12 +90,17 @@ static void updateVelocity(float voltage_v)
         memcpy(coB, (const void*)SharedMemory.reg.coefficientB, sizeof(coB));
     }
 
-    float vol0   = coA[0]; // 無風電圧 [V]
-    float ccA1   = coA[1];
-    float ccB1   = coA[2];
-    float ccA2   = coA[3];
-    float ccB2   = coA[4];
-    float velSwt = coB[0]; // 切替風速 [m/s]
+    // King の法則 v = exp(m * ln(E^2 - E0^2) + lnC) を 3 区分でフィット。
+    // coA = [E0, m1, lnC1, m2, lnC2] / coB = [m3, lnC3, v_split1, v_split2, _]
+    float vol0     = coA[0]; // 無風電圧 [V]
+    float m1       = coA[1];
+    float lnC1     = coA[2];
+    float m2       = coA[3];
+    float lnC2     = coA[4];
+    float m3       = coB[0];
+    float lnC3     = coB[1];
+    float v_split1 = coB[2]; // [m/s]
+    float v_split2 = coB[3]; // [m/s]
 
     float evv = voltage_v * voltage_v - vol0 * vol0;
     float vel_f;
@@ -103,8 +108,11 @@ static void updateVelocity(float voltage_v)
         vel_f = 0.0f;
     } else {
         float lnev = logf(evv);
-        vel_f = expf(lnev * ccA1 + ccB1);
-        if (velSwt < vel_f) vel_f = expf(lnev * ccA2 + ccB2);
+        vel_f = expf(lnev * m1 + lnC1);
+        if (v_split1 <= vel_f) {
+            vel_f = expf(lnev * m2 + lnC2);
+            if (v_split2 <= vel_f) vel_f = expf(lnev * m3 + lnC3);
+        }
     }
 
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
@@ -133,11 +141,12 @@ int main(void)
     TWI0.SADDR = SharedMemory.reg.new_addr << 1;
 
     // ===== OSL 共通レジスタの初期化 ===========================================
-    // Device ID = SIGROW.SERNUM の FNV-1a ハッシュ
+    // Device ID = SIGROW.SERNUM の FNV-1a ハッシュ (22-bit fold)。
+    // 22-bit に揃えることで BACnet Object Instance としてそのまま使える。
     {
         uint8_t serial[16];
         memcpy(serial, (const void*)&SIGROW.SERNUM0, sizeof(serial));
-        SharedMemory.reg.device_id = fnv1a_32(serial, sizeof(serial));
+        SharedMemory.reg.device_id = fnv1a_22(serial, sizeof(serial));
     }
     SharedMemory.reg.addr_key      = 0x00;
     SharedMemory.reg.data_count    = 2;

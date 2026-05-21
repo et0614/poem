@@ -27,7 +27,7 @@ extern "C" {
 
 typedef struct {
     // ===== INFO BLOCK (0x00-0x27, 走査時に 1 回読む) =========================
-    uint32_t device_id;             // 0x00 R   : FNV-1a(SIGROW.SERNUM) ハッシュ
+    uint32_t device_id;             // 0x00 R   : FNV-1a 22-bit (BACnet Object Instance 互換, 0..0x3FFFFE)
     uint8_t  addr_key;              // 0x04 W   : アドレス変更鍵 (STOP で自動クリア)
     uint8_t  new_addr;              // 0x05 R/W : 新しい I2C アドレス
     uint8_t  data_count;            // 0x06 R   : 有効計測値の数 (=2)

@@ -36,6 +36,14 @@ void swap_float(float* f);
  */
 uint32_t fnv1a_32(const uint8_t* data, size_t len);
 
+ /**
+ * @brief FNV-1a を 22-bit に XOR-fold したハッシュ (BACnet Object Instance 用)
+ * @param data ハッシュを作成するuint8_t型配列
+ * @param len 配列要素数
+ * @return 0 〜 0x3FFFFE のハッシュ値 (BACnet 予約値 0x3FFFFF は回避)
+ */
+uint32_t fnv1a_22(const uint8_t* data, size_t len);
+
 
 #ifdef	__cplusplus
 }
