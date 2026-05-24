@@ -42,6 +42,13 @@ bool NM_clearStatus2(slave_node_t* node);
 // 戻り値: true = I²C 書き込み成功、false = 失敗。
 bool NM_writeName(slave_node_t* node, const char* new_name);
 
+// 子機の I²C アドレスを変更する。REG_ADDR_KEY に解錠鍵を、続けて REG_NEW_ADDR に
+// 新アドレスを書き込む 1 トランザクション。子機は STOP 受信で EEPROM 永続化と
+// TWI スレーブアドレス (SADDR) 反映を同時に行う仕様なので、リセット不要で即時切替。
+// 成功時はローカル cache (node->i2c_addr) も新値に更新する。
+// new_addr は 0x08-0x77 の範囲。範囲外、自アドレスと同じ、I²C 失敗のいずれかで false。
+bool NM_writeAddress(slave_node_t* node, uint8_t new_addr);
+
 // MQTT トピック生成ヘルパ。"nodes/config/{8桁hex}" / "nodes/data/{8桁hex}"。
 // buf には 24 byte 程度を確保すれば十分 (例: "nodes/config/12345678" は 21 文字 + NUL)。
 void NM_buildConfigTopic(const slave_node_t* node, char* buf, uint16_t bufsize);

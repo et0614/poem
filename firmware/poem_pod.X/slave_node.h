@@ -33,6 +33,7 @@ extern "C" {
 #define REG_DEVICE_ID           0x00    // uint32 R    : FNV-1a(SIGROW.SERNUM)
 #define REG_ADDR_KEY            0x04    // uint8  W    : アドレス変更鍵
 #define REG_NEW_ADDR            0x05    // uint8  R/W  : 新 I2C アドレス
+#define ADDR_KEY_UNLOCK         0xA5    // REG_ADDR_KEY に書き込むとアドレス変更解錠 (STOP で自動クリア)
 #define REG_DATA_COUNT          0x06    // uint8  R    : 有効計測値数
                                          // 0x07         : reserved (uint16 整列用)
 #define REG_UNIT_TYPE           0x08    // uint16[8] R : BACnet 単位コード (LE)
@@ -67,7 +68,7 @@ extern "C" {
 // 親機側 RAM に保持する子機状態
 typedef struct {
     uint8_t  i2c_addr;                          // 7bit
-    uint32_t device_id;                         // FNV-1a (子機側で生成、親はそのまま受け取る)
+    uint32_t device_id;                         // FNV-1a 22-bit (BACnet Object Instance, 0..0x3FFFFE)
     uint8_t  data_count;                        // 有効な計測値の個数 (≤ NODE_MAX_VALUES)
     uint16_t unit_type[NODE_MAX_VALUES];        // BACnet Engineering Units
     uint8_t  status1;                           // 直近に読んだ Status1 (異常 bitmask)

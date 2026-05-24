@@ -14,6 +14,7 @@ extern "C" {
     
 static void runHttpServerMode(void);
 static void runMqttClientMode(void);
+static void runI2cClockDummy(uint16_t freq_khz);
 
 //以下はW5500コールバック関数**************************
 static void spi_cris_enter(void);

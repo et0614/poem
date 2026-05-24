@@ -4,12 +4,14 @@
 #include "mcc_generated_files/system/pins.h"
 
 #include <avr/wdt.h>
+#include <util/delay_basic.h>
 
 #include "main.h"
 #include "hal_io.h"
 #include "eeprom_manager.h"
 #include "node_manager.h"
 #include "mqtt_app.h"
+#include "i2c_master.h"
 
 //https://github.com/Wiznet/ioLibrary_Driver の公式ライブラリを使用
 #include "W5500/w5500.h" //W5500によるEthernet通信
@@ -125,6 +127,49 @@ int main(void)
 
     if (isInitMode) runHttpServerMode();
     else            runMqttClientMode();
+
+    // I²C SCL 波形観測用 (オシロでクロックを見るとき) — 上の 2 行を
+    // コメントアウトして以下を有効化する。引数は SCL 周波数 [kHz]。
+    //runI2cClockDummy(10);
+}
+
+// SCL ピン (PF3 = TWI1 既定 SCL) を GPIO でオープンドレイン擬似制御する観測用関数。
+// 実 I²C と同じく、Lo は MCU が能動的に引き込み、Hi は外付けプルアップ抵抗任せ。
+// これにより、ケーブル長 (容量) とプルアップで決まる RC 充電カーブが波形に現れる。
+//   - OUT=0 を固定。DIR=1 で Lo 駆動、DIR=0 で Hi-Z (= プルアップで Hi)。
+//   - 外付けプルアップが無いと Hi に上がらないので注意 (実 I²C 配線前提)。
+//
+// 引数 freq_khz: 目標 SCL 周波数 [kHz]。F_CPU = 24 MHz 前提。
+// 実用範囲はおおむね 1 kHz 〜 400 kHz (それ以上は配線の RC 限界に当たる)。
+static void runI2cClockDummy(uint16_t freq_khz)
+{
+    if (freq_khz == 0) freq_khz = 1;  // 0除算回避
+
+    // TWI1 を完全停止してピン制御を GPIO 側へ譲渡。
+    TWI1.MCTRLA = 0;
+
+    // PF3 を OUT=0 固定。DIR で出力/Hi-Z を切り替えてオープンドレインを擬似する。
+    PORTF.OUTCLR = PIN3_bm;
+    PORTF.DIRCLR = PIN3_bm;  // 初期 Hi-Z (= プルアップで Hi)
+
+    // 半周期分のループ回数。_delay_loop_2 は 4 cycle/iter。
+    //   iter = F_CPU / (4 * 2 * F_SCL)
+    //        = 24_000_000 / (8 * freq_khz * 1000)
+    //        = 3000 / freq_khz
+    // (DIR アクセスや wdt_reset 分の数 cycle は誤差として無視。)
+    uint16_t half_loops = (uint16_t)(3000U / freq_khz);
+    if (half_loops == 0) half_loops = 1;
+
+    turnOffRedLED();
+    turnOnGreenLED();
+
+    while (true) {
+        wdt_reset();
+        PORTF.DIRCLR = PIN3_bm;       // Hi-Z → 外付けプルアップで Hi (RC 充電)
+        _delay_loop_2(half_loops);
+        PORTF.DIRSET = PIN3_bm;       // 出力 (OUT=0) → Lo を能動駆動
+        _delay_loop_2(half_loops);
+    }
 }
 
 // SCAN ボタン (IO_SCAN, PF0、プルアップ → 押下で Low) のエッジ検出。

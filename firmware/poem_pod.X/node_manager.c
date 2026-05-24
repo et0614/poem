@@ -71,6 +71,21 @@ bool NM_writeName(slave_node_t* node, const char* new_name)
     return true;
 }
 
+bool NM_writeAddress(slave_node_t* node, uint8_t new_addr)
+{
+    if (new_addr < I2C_ADDR_SCAN_FIRST || new_addr > I2C_ADDR_SCAN_LAST) return false;
+    if (new_addr == node->i2c_addr) return true;  // 変更なしは成功扱い
+
+    // [REG_ADDR_KEY] -> ADDR_KEY_UNLOCK (鍵)、続けて [REG_NEW_ADDR] -> new_addr。
+    // 子機の reg_pointer は最初の 1byte (REG_ADDR_KEY=0x04) を起点に自動インクリメントする。
+    // STOP 受信で子機が EEPROM 永続化 + SADDR 即時反映を行うので、これ以降は new_addr で応答する。
+    uint8_t payload[3] = { REG_ADDR_KEY, ADDR_KEY_UNLOCK, new_addr };
+    if (!I2C_Write(node->i2c_addr, payload, sizeof(payload))) return false;
+
+    node->i2c_addr = new_addr;
+    return true;
+}
+
 uint8_t NM_scan(void)
 {
     NM_NodeCount = 0;
@@ -102,11 +117,18 @@ bool NM_pollOne(slave_node_t* node)
     node->status1 = buf[REG_STATUS1 - POLL_BLOCK_OFFSET];
     // 0x19: Status2
     node->status2 = buf[REG_STATUS2 - POLL_BLOCK_OFFSET];
-    // 0x1C~0x3B: float[8] LE
-    // AVR は LE なので memcpy で OK
-    memcpy(node->value,
-           &buf[REG_VALUE - POLL_BLOCK_OFFSET],
-           sizeof(float) * NODE_MAX_VALUES);
+
+    // 0x1C~0x3B: float[8] LE — Status2==1 (子機が新値を準備済み) のときだけ取り込む。
+    // それ以外は前回値を保持し、新旧は seq (=sq) で表現する。
+    // ※ slave 側は ATOMIC_BLOCK で書き込んでいても、こちらの read は 1 バイトずつ
+    //   別 ISR に分かれるため、status2==0 のタイミングの float 領域はバイト裂け
+    //   (tearing) で 0 などに化ける可能性がある。これを取り込まないことで防ぐ。
+    if (node->status2 == 1) {
+        // AVR は LE なので memcpy で OK
+        memcpy(node->value,
+               &buf[REG_VALUE - POLL_BLOCK_OFFSET],
+               sizeof(float) * NODE_MAX_VALUES);
+    }
 
     return true;
 }
@@ -121,12 +143,12 @@ bool NM_clearStatus2(slave_node_t* node)
 
 void NM_buildConfigTopic(const slave_node_t* node, char* buf, uint16_t bufsize)
 {
-    snprintf(buf, bufsize, "nodes/config/%08lX", (unsigned long)node->device_id);
+    snprintf(buf, bufsize, "nodes/config/%lu", (unsigned long)node->device_id);
 }
 
 void NM_buildDataTopic(const slave_node_t* node, char* buf, uint16_t bufsize)
 {
-    snprintf(buf, bufsize, "nodes/data/%08lX", (unsigned long)node->device_id);
+    snprintf(buf, bufsize, "nodes/data/%lu", (unsigned long)node->device_id);
 }
 
 // JSON ビルダ -----------------------------------------------------------------
@@ -148,7 +170,7 @@ uint16_t NM_buildConfigJson(const slave_node_t* node, char* buf, uint16_t bufsiz
     char* end = buf + bufsize;
     int   n;
 
-    n = snprintf(p, end - p, "{\"id\":\"%08lX\",\"name\":\"%s\",\"cnt\":%u,\"u\":[",
+    n = snprintf(p, end - p, "{\"id\":%lu,\"name\":\"%s\",\"cnt\":%u,\"u\":[",
                  (unsigned long)node->device_id, node->name, (unsigned)node->data_count);
     if (n < 0 || n >= end - p) return 0;
     p += n;
@@ -175,7 +197,7 @@ uint16_t NM_buildDataJson(const slave_node_t* node, char* buf, uint16_t bufsize)
     char* end = buf + bufsize;
     int   n;
 
-    n = snprintf(p, end - p, "{\"id\":\"%08lX\",\"st\":%u,\"sq\":%u,\"v\":[",
+    n = snprintf(p, end - p, "{\"id\":%lu,\"st\":%u,\"sq\":%u,\"v\":[",
                  (unsigned long)node->device_id,
                  (unsigned)node->status1,
                  (unsigned)node->seq);

@@ -31,3 +31,12 @@ uint32_t fnv1a_32(const uint8_t* data, size_t len) {
     }
     return hash;
 }
+
+// FNV-1a (32-bit) を XOR-fold で 22-bit に圧縮し、BACnet Object Instance に
+// そのまま使える値を返す。0x3FFFFF は BACnet 予約 (no object instance) のため回避する。
+uint32_t fnv1a_22(const uint8_t* data, size_t len) {
+    uint32_t h = fnv1a_32(data, len);
+    h = (h ^ (h >> 22)) & 0x3FFFFFUL;
+    if (h == 0x3FFFFFUL) h = 0x3FFFFEUL;
+    return h;
+}

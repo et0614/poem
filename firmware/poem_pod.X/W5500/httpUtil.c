@@ -127,14 +127,16 @@ uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * buf, uint16_t
         n = snprintf(p, end - p,
             "<!DOCTYPE html><html><head><title>PoEM-pod Devices</title>"
             "<style>"
-            "body{font-family:sans-serif;width:480px;margin:10px auto;font-size:13px}"
+            "body{font-family:sans-serif;width:520px;margin:10px auto;font-size:13px}"
             "table{border-collapse:collapse;width:100%%}"
             "th,td{padding:2px 6px;border-bottom:1px solid #ddd;text-align:left}"
             "th{background:#eee}"
             "input[type=text]{width:60px;padding:2px}"
+            "input[type=number]{width:48px;padding:2px}"
             "input[type=submit],a.btn{padding:4px 12px;margin:8px 4px 0 0;display:inline-block}"
             "</style></head><body>"
             "<h3>Detected Devices (%u)</h3>"
+            "<p style=\"font-size:11px;color:#666\">Addr is decimal (8-119 = 0x08-0x77). Changes take effect immediately.</p>"
             "<form method=post action=/devices.cgi>"
             "<table><tr><th>#<th>Addr<th>DeviceID<th>St1<th>N<th>Name</tr>",
             (unsigned)NM_NodeCount);
@@ -142,13 +144,18 @@ uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * buf, uint16_t
         p += n;
 
         // 子機テーブル本体。バッファ残量を見て途中で切る (オーバーフロー防止)。
+        // Addr 列を input 化したことで 1 行あたり ~70 byte 増えるので、break しきい値も広げる。
         for (uint8_t i = 0; i < NM_NodeCount; i++) {
-            if ((end - p) < 220) break;  // 残り 220 byte 切ったらフォーム閉じへ
+            if ((end - p) < 280) break;  // 残り 280 byte 切ったらフォーム閉じへ
             const slave_node_t* nd = &NM_Nodes[i];
             n = snprintf(p, end - p,
-                "<tr><td>%u<td>0x%02X<td>%08lX<td>0x%02X<td>%u"
+                "<tr><td>%u"
+                "<td><input type=number name=a%u value=%u min=8 max=119>"
+                "<td>%lu<td>0x%02X<td>%u"
                 "<td><input type=text name=n%u value=\"%s\" maxlength=15></tr>",
-                (unsigned)i, (unsigned)nd->i2c_addr, (unsigned long)nd->device_id,
+                (unsigned)i,
+                (unsigned)i, (unsigned)nd->i2c_addr,
+                (unsigned long)nd->device_id,
                 (unsigned)nd->status1, (unsigned)nd->data_count,
                 (unsigned)i, nd->name);
             if (n < 0 || n >= end - p) break;
@@ -171,14 +178,44 @@ uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * buf, uint16_t
     return 0;
 }
 
-// /devices.cgi POST: フォームから来た name を子機 (REG_NAME) へ I²C で書き戻す。
-// 子機側で EEPROM に永続化される。各子機の name は ?n0=...&n1=... の形で来る。
-// 変更がない子機は I²C を発行せずスキップ。
+// 新アドレスが他の (自分以外の) ノードのアドレスと衝突しないかを判定。
+// アドレス変更を「同時に複数」受け付けたときに片方が他方を上書きする事故を防ぐ。
+static bool addrConflictsWithOthers(uint8_t self_idx, uint8_t new_addr)
+{
+    for (uint8_t j = 0; j < NM_NodeCount; j++) {
+        if (j == self_idx) continue;
+        if (NM_Nodes[j].i2c_addr == new_addr) return true;
+    }
+    return false;
+}
+
+// /devices.cgi POST: フォームから来た addr/name を子機へ I²C で書き戻す。
+// 子機側で EEPROM に永続化される。形式: ?a0=...&n0=...&a1=...&n1=...
+// 変更がないものは I²C を発行せずスキップ。アドレス変更を先に処理して、続けて name 変更。
 static uint8_t process_devices_post(uint8_t * uri, uint8_t * buf, uint16_t * len)
 {
-    char param_name[6];        // "n63\0" 程度
+    char param_name[6];        // "a63\0" / "n63\0" 程度
     char new_name[NODE_NAME_LEN];
 
+    // ===== アドレス変更 (先に処理) =============================================
+    // 同じ POST 内でアドレスと名前の両方が来ても、アドレス変更後に新アドレスで name を書ける。
+    for (uint8_t i = 0; i < NM_NodeCount; i++) {
+        snprintf(param_name, sizeof(param_name), "a%u", (unsigned)i);
+        uint8_t* val = get_http_param_value((char*)uri, param_name);
+        if (!val) continue;
+
+        // 範囲外 / 同値 / 衝突は黙ってスキップ
+        int parsed = atoi((char*)val);
+        if (parsed < I2C_ADDR_SCAN_FIRST || parsed > I2C_ADDR_SCAN_LAST) continue;
+        uint8_t new_addr = (uint8_t)parsed;
+        if (new_addr == NM_Nodes[i].i2c_addr) continue;
+        if (addrConflictsWithOthers(i, new_addr)) continue;
+
+        // 失敗しても他ノード処理は継続。成功時は NM_Nodes[i].i2c_addr が更新される。
+        NM_writeAddress(&NM_Nodes[i], new_addr);
+    }
+
+    // ===== 名前変更 ============================================================
     for (uint8_t i = 0; i < NM_NodeCount; i++) {
         snprintf(param_name, sizeof(param_name), "n%u", (unsigned)i);
         uint8_t* val = get_http_param_value((char*)uri, param_name);
@@ -198,7 +235,7 @@ static uint8_t process_devices_post(uint8_t * uri, uint8_t * buf, uint16_t * len
     int written = snprintf((char*)buf, CGI_BUF_SIZE,
         "<!DOCTYPE html><html><head><title>Saved</title>"
         "<meta http-equiv=refresh content=\"1;url=/devices.cgi\">"
-        "</head><body><p>Names saved. Redirecting...</p></body></html>");
+        "</head><body><p>Settings saved. Redirecting...</p></body></html>");
     if (written < 0 || written >= CGI_BUF_SIZE) { *len = 0; return HTTP_FAILED; }
     *len = (uint16_t)written;
     return HTTP_OK;

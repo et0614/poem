@@ -103,11 +103,12 @@ int main(void)
     TWI0.SADDR = SharedMemory.reg.new_addr << 1;
 
     // ===== OSL 共通レジスタの初期化 ===========================================
-    // Device ID = SIGROW.SERNUM の FNV-1a ハッシュ
+    // Device ID = SIGROW.SERNUM の FNV-1a ハッシュ (22-bit fold)。
+    // 22-bit に揃えることで BACnet Object Instance としてそのまま使える。
     {
         uint8_t serial[16];
         memcpy(serial, (const void*)&SIGROW.SERNUM0, sizeof(serial));
-        SharedMemory.reg.device_id = fnv1a_32(serial, sizeof(serial));
+        SharedMemory.reg.device_id = fnv1a_22(serial, sizeof(serial));
     }
     SharedMemory.reg.addr_key      = 0x00;
     SharedMemory.reg.data_count    = 2;
