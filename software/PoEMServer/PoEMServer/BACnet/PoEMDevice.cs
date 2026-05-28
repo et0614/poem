@@ -7,8 +7,8 @@ namespace PoEMServer.BACnet
     /// <summary>
     /// PoEM 親機 (poem_pod) からの MQTT publish を BACnet オブジェクトへ反映する。
     ///
-    /// 子機は親機の SCAN 時に "nodes/config/&lt;hex&gt;" で固定情報 (DataCount/UnitType/Name) を、
-    /// 毎秒 "nodes/data/&lt;hex&gt;" で計測値を publish する。本クラスは:
+    /// 子機は親機の SCAN 時に "nodes/config/&lt;id&gt;" で固定情報 (DataCount/UnitType/Name) を、
+    /// 毎秒 "nodes/data/&lt;id&gt;" で計測値を publish する。本クラスは:
     ///   - 初めて受信した DeviceID については BACnet オブジェクトを動的に生成 (BACnet 標準の
     ///     CreateObject 相当)。OBJECT_LIST はストレージから自動生成される。
     ///   - 既知の DeviceID については data 受信のたびに PRESENT_VALUE を更新。
@@ -68,12 +68,12 @@ namespace PoEMServer.BACnet
         #region 公開メソッド
 
         /// <summary>
-        /// "nodes/config/&lt;hex&gt;" 受信時の処理。新規 DeviceID なら BACnet オブジェクトを
+        /// "nodes/config/&lt;id&gt;" 受信時の処理。新規 DeviceID なら BACnet オブジェクトを
         /// 生成、既知なら Name / UnitType を更新する。
         /// </summary>
         public void OnConfig(NodeConfigPayload config)
         {
-            if (!TryParseDeviceId(config.IdHex, out uint deviceId)) return;
+            uint deviceId = config.Id;
 
             lock (syncLock)
             {
@@ -121,11 +121,11 @@ namespace PoEMServer.BACnet
         }
 
         /// <summary>
-        /// "nodes/data/&lt;hex&gt;" 受信時の処理。config 未受信の DeviceID は無視 (config 待ち)。
+        /// "nodes/data/&lt;id&gt;" 受信時の処理。config 未受信の DeviceID は無視 (config 待ち)。
         /// </summary>
         public void OnData(NodeDataPayload data)
         {
-            if (!TryParseDeviceId(data.IdHex, out uint deviceId)) return;
+            uint deviceId = data.Id;
 
             lock (syncLock)
             {
@@ -155,7 +155,7 @@ namespace PoEMServer.BACnet
             string disp = DisplayName(child);
 
             AddDateTimeValue(b + 0u, $"{disp}_DT", $"Last data publish time of {disp}", DateTime.Now);
-            AddCharString  (b + 1u, $"{disp}_ID", $"DeviceID (FNV-1a hash) of {disp}", $"{child.DeviceId:X8}");
+            AddCharString  (b + 1u, $"{disp}_ID", $"DeviceID (FNV-1a 22bit) of {disp}", $"{child.DeviceId}");
             AddCharString  (b + 2u, $"{disp}_NAME", $"Configured label of {disp}", child.Name);
             AddAnalogInput (b + 3u, $"{disp}_ST",  $"Status1 bitmask of {disp}", 0, BACNET_UNITS_NO_UNITS);
             AddAnalogInput (b + 4u, $"{disp}_SEQ", $"Sequence number of {disp}", 0, BACNET_UNITS_NO_UNITS);
@@ -279,11 +279,6 @@ namespace PoEMServer.BACnet
 
         #region 内部ユーティリティ
 
-        private static bool TryParseDeviceId(string hex, out uint id)
-        {
-            return uint.TryParse(hex, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out id);
-        }
-
         private static ushort[] SanitizeUnits(ushort[] u)
         {
             if (u == null) return System.Array.Empty<ushort>();
@@ -304,7 +299,7 @@ namespace PoEMServer.BACnet
         private static string DisplayName(ChildNode child)
         {
             string n = child.Name?.Trim() ?? "";
-            return string.IsNullOrEmpty(n) ? $"Node_{child.DeviceId:X8}" : n;
+            return string.IsNullOrEmpty(n) ? $"Node_{child.DeviceId}" : n;
         }
 
         #endregion

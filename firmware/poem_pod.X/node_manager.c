@@ -86,6 +86,11 @@ bool NM_writeAddress(slave_node_t* node, uint8_t new_addr)
     return true;
 }
 
+// I²C 多分岐で配線容量が大きいとき、まれに NACK 取りこぼしや読み出しビット化けが
+// 起きる。スキャンは検出漏れが致命的 (子機が完全に「居ない」扱いになる) なので、
+// アドレスチェックと情報読出のそれぞれを 3 回までリトライする。
+#define SCAN_RETRY_MAX  3
+
 uint8_t NM_scan(void)
 {
     NM_NodeCount = 0;
@@ -95,12 +100,20 @@ uint8_t NM_scan(void)
          addr <= I2C_ADDR_SCAN_LAST && NM_NodeCount < MAX_NODES;
          addr++)
     {
-        if (!I2C_IsConnected(addr)) continue;
-
-        if (readInfoBlock(addr, &NM_Nodes[NM_NodeCount])) {
-            NM_NodeCount++;
+        // アドレス応答チェック (リトライ付き)
+        bool found = false;
+        for (uint8_t attempt = 0; attempt < SCAN_RETRY_MAX; attempt++) {
+            if (I2C_IsConnected(addr)) { found = true; break; }
         }
-        // 固有情報の読み取りに失敗したアドレスは黙って捨てる (次回 SCAN で復活する可能性)
+        if (!found) continue;
+
+        // 固有情報の読み出し (リトライ付き)。失敗したアドレスは黙って捨てる。
+        for (uint8_t attempt = 0; attempt < SCAN_RETRY_MAX; attempt++) {
+            if (readInfoBlock(addr, &NM_Nodes[NM_NodeCount])) {
+                NM_NodeCount++;
+                break;
+            }
+        }
     }
 
     return NM_NodeCount;
