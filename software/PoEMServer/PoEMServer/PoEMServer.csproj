@@ -10,7 +10,7 @@
   <ItemGroup>
     <PackageReference Include="MQTTnet" Version="5.0.1.1416" />
     <PackageReference Include="MQTTnet.Server" Version="5.0.1.1416" />
-    <PackageReference Include="BACnet" Version="3.0.2-pr157" />
+    <PackageReference Include="BACnet" Version="3.0.2-pr159" />
   </ItemGroup>
 
   <ItemGroup>

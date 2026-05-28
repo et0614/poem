@@ -243,7 +243,7 @@ PublishScripts/
 # NuGet Packages
 *.nupkg
 # imurasawa20260519
-!software/PoEMServer/BACnet.3.0.2-pr157.nupkg
+!software/PoEMServer/BACnet.3.0.2-pr159.nupkg
 
 # NuGet Symbol Packages
 *.snupkg
