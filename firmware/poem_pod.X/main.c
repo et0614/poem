@@ -125,12 +125,11 @@ int main(void)
     //それ以外は MQTT 通信モード (本番運用)。
     isInitMode = (IO_RESET_GetValue() == 0);
 
+    // I²C SCL 波形観測時は以下を有効化する。引数は SCL 周波数 [kHz]。
+    //runI2cClockDummy(10);
+    
     if (isInitMode) runHttpServerMode();
     else            runMqttClientMode();
-
-    // I²C SCL 波形観測用 (オシロでクロックを見るとき) — 上の 2 行を
-    // コメントアウトして以下を有効化する。引数は SCL 周波数 [kHz]。
-    //runI2cClockDummy(10);
 }
 
 // SCL ピン (PF3 = TWI1 既定 SCL) を GPIO でオープンドレイン擬似制御する観測用関数。

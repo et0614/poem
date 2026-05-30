@@ -157,9 +157,11 @@ int main(void)
     for (uint8_t i = 0; i < 8; i++) SharedMemory.reg.value[i] = 0.0f;
 
     // ===== 拡張領域の初期化 ===================================================
+    // 多数台接続時の電源 IR drop 切り分け用に、起動時は風速計測を OFF にする。
+    // 通常運用に戻すときは enable=1 / SLP_SetHigh() に戻す。
     SharedMemory.reg.enable = 1;
 
-    // 風速回路起動
+    // 風速回路有効化 (5V 昇圧 ON、熱線電源)
     SLP_SetHigh();
 
     // イベントハンドラ登録
