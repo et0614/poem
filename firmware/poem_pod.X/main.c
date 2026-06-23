@@ -126,7 +126,7 @@ int main(void)
     isInitMode = (IO_RESET_GetValue() == 0);
 
     // I²C SCL 波形観測時は以下を有効化する。引数は SCL 周波数 [kHz]。
-    //runI2cClockDummy(10);
+    runI2cClockDummy(100);
     
     if (isInitMode) runHttpServerMode();
     else            runMqttClientMode();
