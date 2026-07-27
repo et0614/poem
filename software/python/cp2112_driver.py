@@ -96,7 +96,12 @@ class CP2112Device:
     # region I2C通信処理
 
     def read_i2c_block(self, offset, length, retries=2):
-        """低レイヤーI2C読み込み (CP2112コマンド処理)"""
+        """低レイヤーI2C読み込み (CP2112コマンド処理)。
+
+        スレーブ不在(NACK)・転送エラー・タイムアウト時は None を返す。
+        転送の COMPLETE と DATA_READ_RESPONSE の有効バイト数を検証するので、
+        HID バッファの残骸(ゴミ)を有効データとして返すことはない。
+        """
         for attempt in range(retries + 1):
             try:
                 self.__dev.write([
@@ -107,27 +112,46 @@ class CP2112Device:
                     0x01, # Target Address Length (通常1)
                     offset])
 
-                # ポーリング
+                # 転送完了までポーリング。COMPLETE を実際に確認できたかを記録する。
+                # NACK(スレーブ不在)や ERROR のときは COMPLETE にならないので失敗扱い。
+                completed = False
                 for _ in range(15):
                     self.__dev.write([
-                        CP2112Report.TRANSFER_STATUS_REQ, 
+                        CP2112Report.TRANSFER_STATUS_REQ,
                         0x01])
                     res = self.__dev.read(64, 100)
-                    if (res and 
-                        res[0] == CP2112Report.TRANSFER_STATUS_RESPONSE and 
-                        res[1] == I2CStatus.COMPLETE):
-                        break
+                    if res and res[0] == CP2112Report.TRANSFER_STATUS_RESPONSE:
+                        status = res[1]
+                        if status == I2CStatus.COMPLETE:
+                            completed = True
+                            break
+                        if status == I2CStatus.ERROR:
+                            # NACK / バスエラー。これ以上待っても無駄なので抜ける。
+                            break
                     time.sleep(0.001)
+
+                if not completed:
+                    # 完了が確認できない(不在/NACK/タイムアウト)。中途半端な転送を
+                    # 破棄してからリトライ。ゴミは返さない。
+                    self.__dev.write([CP2112Report.CANCEL_TRANSFER, 0x01])
+                    if attempt < retries:
+                        time.sleep(0.001)
+                    continue
 
                 # データ取得
                 self.__dev.write([
-                    CP2112Report.DATA_READ_FORCE_SEND, 
-                    0x00, 
+                    CP2112Report.DATA_READ_FORCE_SEND,
+                    0x00,
                     length])
                 data_res = self.__dev.read(64, 500)
-                if data_res and data_res[0] == CP2112Report.DATA_READ_RESPONSE:
+                # DATA_READ_RESPONSE = [0x13, status, valid_len, data...]
+                # valid_len(data_res[2]) が要求長に満たなければ失敗扱い(ゴミを返さない)。
+                if (data_res and
+                        data_res[0] == CP2112Report.DATA_READ_RESPONSE and
+                        len(data_res) >= 3 and
+                        data_res[2] >= length):
                     return bytes(data_res[3:3+length]) # bytes型で返す
-                    
+
             except Exception as e:
                 if attempt == retries: return None
                 time.sleep(0.001)

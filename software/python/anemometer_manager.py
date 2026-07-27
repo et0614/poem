@@ -1,406 +1,387 @@
-import time
+"""
+OSL (Overlay Sensing Layer) 規格準拠の風速計子機 (poem_velocity_sensor /
+mlogger_velocity_sensor) を CP2112 USB-I2C ブリッジ経由で操作する統一クライアント。
+
+poem / mlogger の 2 実装を firmware 実装に照らして検証・統合したもの。
+protocol 関連 firmware (i2c_shared_data.h / i2c_slave.c / eeprom_manager.c ...) は
+両プロジェクトで完全に同一なので、本クライアントの挙動は両機で共通に使える。
+
+仕様: SHASE 2026 第2報 (Togashi 2026) + firmware の i2c_shared_data.h
+   - INFO BLOCK (0x00-0x27): device_id / addr_key / new_addr / data_count /
+     unit_type[8] / name[16]  ※接続時に 1 回読む
+   - POLL BLOCK (0x28-0x4B): status1 / status2 / reserved / value[8] float
+     ※毎周期 1 回読む (36 byte 一括取得)
+   - EXTENSION (0x4C-): enable / filter_n / coefA[5] / coefB[5] (本子機固有)
+
+リトルエンディアン、無 alignment、CRC 無し。Status1 の bit i が立っていれば
+value[i] は stale / 異常 (全 stale の慣例値は 0xFF)。
+
+firmware 検証で確定した要点 (旧 2 実装の食い違いを解消):
+  - device_id は FNV-1a を XOR-fold した 22bit 値 (BACnet Object Instance 互換,
+    0..0x3FFFFE)。4byte uint32 LE で読む。
+  - I2C アドレス変更は「鍵 (0xA5) + 新アドレス」を **1 トランザクションで連続書込**
+    しなければならない。addr_key は STOP ごとにクリアされるため、鍵と新アドレスを
+    別トランザクションに分けると new_addr 書込が弾かれ **サイレントに失敗する**。
+    書込が成立すると子機は STOP 時に EEPROM 永続化 + TWI0.SADDR を **即時反映**
+    (リセット不要のシームレス切替)。
+  - name は firmware が load 時に 0xFF (消去済 EEPROM) を NUL へサニタイズするので、
+    I2C 越しには常に NUL 終端のクリーン値。本実装は保険で 0xFF も空文字扱いにする。
+  - 起動直後の enable 既定値は firmware (main.c) により異なる (poem=ON / mlogger=OFF)。
+    クライアントは起動状態を仮定せず、接続後に必ず set_enable(True) を明示すること。
+"""
 import struct
-from typing import List, Dict, Union, Optional
 import sys
+import time
+from typing import Any, Dict, List, Optional
+
 from cp2112_driver import CP2112Device
 
-class AnemometerConstants:
 
-    """i2c_shared_data.h に基づく定数定義"""
-    # I2C Address
-    DEFAULT_I2C_ADDR = 0x10 
+# ============================================================
+# OSL register map 定数
+# ============================================================
+class AnemometerRegisters:
+    DEFAULT_I2C_ADDR  = 0x10
+    ADDR_KEY_UNLOCK   = 0xA5
 
-    # データ型サイズ定義 (bytes)
-    SIZE_UINT8  = 1
-    SIZE_FLOAT  = 4
-    SIZE_ID     = 16
-    SIZE_HASH   = 4
-    SIZE_COEF_ARRAY = SIZE_FLOAT * 5  # float[5] = 20 bytes
+    # ---- INFO BLOCK (0x00-0x27, 走査時に 1 回読む) -----------------------
+    REG_DEVICE_ID     = 0x00   # uint32 R  : FNV-1a 22bit (BACnet Object Instance 互換, 0..0x3FFFFE)
+    REG_ADDR_KEY      = 0x04   # uint8  W  : アドレス変更鍵 (STOP で自動クリア)
+    REG_NEW_ADDR      = 0x05   # uint8  R/W: 新しい I2C アドレス
+    REG_DATA_COUNT    = 0x06   # uint8  R  : 有効計測値の数 (本子機は 2)
+    REG_UNIT_TYPE     = 0x08   # uint16[8] R: BACnet engineering unit codes
+    REG_NAME          = 0x18   # char[16]  R/W: 装置ラベル (NUL 終端)
+    NAME_LEN          = 16
 
-    # Memory Map Offsets (SensorData_t structure)
-    # [Read Only Area] -------------------------
-    ADDR_VOLTAGE_HIGH  = 0x00
-    ADDR_VOLTAGE_LOW   = ADDR_VOLTAGE_HIGH  + SIZE_UINT8
-    ADDR_VOLTAGE_CRC   = ADDR_VOLTAGE_LOW   + SIZE_UINT8
+    # ---- POLL BLOCK (0x28-0x4B, 毎周期読む) ------------------------------
+    REG_POLL_BASE     = 0x28
+    POLL_BLOCK_SIZE   = 36     # status1(1) + status2(1) + reserved(2) + value[8](32)
+    POLL_OFS_STATUS1  = 0
+    POLL_OFS_STATUS2  = 1
+    POLL_OFS_VALUE    = 4      # value[0] の先頭バイト
+    NUM_VALUES        = 8
 
-    ADDR_VELOCITY_HIGH = ADDR_VOLTAGE_CRC   + SIZE_UINT8
-    ADDR_VELOCITY_LOW  = ADDR_VELOCITY_HIGH + SIZE_UINT8
-    ADDR_VELOCITY_CRC  = ADDR_VELOCITY_LOW  + SIZE_UINT8
+    REG_STATUS1       = 0x28   # uint8 R
+    REG_STATUS2       = 0x29   # uint8 R/W
+    REG_VALUE         = 0x2C   # float[8] R (LE)
 
-    ADDR_TEMP_HIGH     = ADDR_VELOCITY_CRC  + SIZE_UINT8
-    ADDR_TEMP_LOW      = ADDR_TEMP_HIGH     + SIZE_UINT8
-    ADDR_TEMP_CRC      = ADDR_TEMP_LOW      + SIZE_UINT8
+    # ---- EXTENSION (0x4C-、本子機固有) ----------------------------------
+    REG_EXT_ENABLE    = 0x4C   # uint8 R/W : 風速計回路の起動フラグ
+    REG_EXT_FILTER_N  = 0x4D   # uint8 R/W : 平滑化フィルタ係数 (0~20)
+    REG_EXT_COEF_A    = 0x4E   # float[5] R/W
+    REG_EXT_COEF_B    = 0x62   # float[5] R/W
+    EXT_COEF_LEN      = 5
+    SIZE_COEF_ARRAY   = 4 * EXT_COEF_LEN   # float[5] = 20 byte
 
-    ADDR_STATUS        = ADDR_TEMP_CRC      + SIZE_UINT8
-    ADDR_VERSION       = ADDR_STATUS        + SIZE_UINT8
+    # ---- Status1 (per-value bitmask; 全 stale の慣例値) ------------------
+    STATUS1_ALL_STALE = 0xFF   # 予熱中 / SHT4x 通信失敗 / 親機が子機を読めなかった等
 
-    # 製造ID領域
-    ADDR_ID_START      = ADDR_VERSION       + SIZE_UINT8
-    ADDR_ID_CRC        = ADDR_ID_START      + SIZE_ID
-    ADDR_ID_HASH       = ADDR_ID_CRC        + SIZE_UINT8
-    ADDR_ID_HASH_CRC   = ADDR_ID_HASH       + SIZE_HASH
+    # ---- value 配列インデックス (本子機の物理量割当) --------------------
+    VAL_IDX_VELOCITY  = 0      # m/s
+    VAL_IDX_VOLTAGE   = 1      # V
 
-    # [Read/Write Area] ------------------------
-    ADDR_ENABLE        = ADDR_ID_HASH_CRC   + SIZE_UINT8
-    ADDR_FILTER_N      = ADDR_ENABLE        + SIZE_UINT8
-    ADDR_UPDATED       = ADDR_FILTER_N      + SIZE_UINT8
-
-    # 係数領域
-    ADDR_COEF_A_START  = ADDR_UPDATED       + SIZE_UINT8
-    ADDR_COEF_A_CRC    = ADDR_COEF_A_START  + SIZE_COEF_ARRAY
-
-    ADDR_COEF_B_START  = ADDR_COEF_A_CRC    + SIZE_UINT8
-    ADDR_COEF_B_CRC    = ADDR_COEF_B_START  + SIZE_COEF_ARRAY
-
-    # 通信設定
-    ADDR_I2C_UNLOCK    = ADDR_COEF_B_CRC    + SIZE_UINT8
-    ADDR_I2C_NEW_ADDR  = ADDR_I2C_UNLOCK    + SIZE_UINT8
-
-    # Status Bits
-    STATUS_HEATING_MASK = 0x01
+    # ---- BACnet Engineering Units (ASHRAE 135) --------------------------
+    UNIT_VOLTS             = 5
+    UNIT_METERS_PER_SECOND = 74
 
 
+# ============================================================
+# 主クライアントクラス
+# ============================================================
 class AnemometerManager(CP2112Device):
-    def __init__(self, slave_addr=AnemometerConstants.DEFAULT_I2C_ADDR, serial_number=None):
+    """OSL 共通レジスタ + 風速計拡張領域の Python クライアント。"""
+
+    def __init__(self,
+                 slave_addr: int = AnemometerRegisters.DEFAULT_I2C_ADDR,
+                 serial_number: Optional[str] = None):
         super().__init__(slave_addr=slave_addr, serial_number=serial_number)
-        self._last_comm_time = 0.0  # 最後に通信した時刻（エポック秒）を保持
-        self._keep_alive_threshold = 0.950  # マイコンの1000msより少し短めに設定
+        self._last_comm_time = 0.0
+        # 子機側 KEEP_ALIVE_DURATION = 1000ms。少し短めに設定して sleep 直前を狙う。
+        self._keep_alive_threshold = 0.950
 
+    # ------------------------------------------------------------------
+    # sleep 対策 (PWR_DOWN からの復帰)
+    #   enable=0 のとき子機は PWR_DOWN に入るため、直前通信から閾値秒数以上
+    #   経過していたら wakeup パルスで起こす必要がある。
+    # ------------------------------------------------------------------
 
-    def _ensure_wakeup(self):
-        """
-        最後に通信してから一定時間が経過していれば自動でウェイクアップを実行する
-        """
-        now = time.time()
-        # 経過時間が閾値を超えていれば、マイコンが寝ていると判断して起こす
-        if (now - self._last_comm_time) > self._keep_alive_threshold:
+    def _ensure_wakeup(self) -> None:
+        """最後の通信から閾値以上空いていたら wakeup を打つ。"""
+        if (time.time() - self._last_comm_time) > self._keep_alive_threshold:
             self._robust_wakeup()
-        
-        # 通信時刻を更新（この後通信が行われるため）
         self._last_comm_time = time.time()
 
-
-    def _robust_wakeup(self):
-        # 念のため前回の残骸を掃除
+    def _robust_wakeup(self) -> None:
+        # 前回の残骸を掃除 (CP2112 の状態をリセット)
         self._raw_write([0x17, 0x01])
         time.sleep(0.01)
-
-        # 【ウェイクアップ・パルス】 
-        # アドレスのみを書き込む（データ長0）。
-        # ここでAVRがクロックストレッチを行い、CP2112がBusy(01)になるはず。
+        # ウェイクアップ・パルス: アドレスのみ書込 (データ長0)。
+        # AVR がクロックストレッチしている間に SUT/VREG/CPU 起動を待つ。
         self._raw_write([0x14, self.slave_addr << 1, 0x00])
-        
-        # AVRがメインクロックを起動して安定するまで十分に待つ
-        # SUT(10us) + VREG(24us) + CPU初期化 を考慮し、余裕を持って2ms待機
-        time.sleep(0.002) 
-
-        # 【強制リセット】
-        # CP2112が「Busy」で固まっているはずなので、一旦リセットしてバスを解放させる
+        time.sleep(0.002)   # SUT(10us) + VREG(24us) + CPU 起動 を待つ
+        # CP2112 を強制リセットしてバスを解放
         self._raw_write([0x17, 0x01])
         time.sleep(0.01)
-
 
     def read_i2c_block(self, offset: int, length: int) -> Optional[bytes]:
-        """CP2112経由でI2C読み込みする"""
-        # 通信の直前にWakeup要否をチェック
         self._ensure_wakeup()
-
-        rslt = super().read_i2c_block(offset, length)
-        if rslt is not None:
-            # 通信成功後、最終通信時刻を最新に更新
+        result = super().read_i2c_block(offset, length)
+        if result is not None:
             self._last_comm_time = time.time()
-        return rslt
-
+        return result
 
     def write_i2c_block(self, offset: int, data: List[int]) -> bool:
-        """CP2112経由でI2C書き込みする"""
-        # 通信の直前にWakeup要否をチェック
         self._ensure_wakeup()
-
-        rslt = super().write_i2c_block(offset, data)
-        if rslt:
-            # 通信成功後、最終通信時刻を最新に更新
+        result = super().write_i2c_block(offset, data)
+        if result:
             self._last_comm_time = time.time()
-        return rslt
+        return result
 
-    # ------------------------------------------------------------------
-    # 公開メソッド: データ取得 (Read Only Area)
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # INFO BLOCK (機器固有情報、通常は接続時に 1 回読む)
+    # ==================================================================
 
-    def get_voltage(self) -> Optional[float]:
-        """
-        現在の電圧値[mV]を取得する
-        Returns: 電圧(float), 失敗時 None
-        """
-        val_bytes = self.read_register_with_crc(AnemometerConstants.ADDR_VOLTAGE_HIGH, 2)
-        if val_bytes is None:
+    def get_device_id(self) -> Optional[int]:
+        """FNV-1a 22bit Device ID (BACnet Object Instance 互換, 0..0x3FFFFE)。
+        4byte uint32 LE で読むが値は 22bit に収まる。"""
+        raw = self.read_i2c_block(AnemometerRegisters.REG_DEVICE_ID, 4)
+        if raw is None:
             return None
-        m_volt = struct.unpack('>H', val_bytes)[0]
-        return float(m_volt)
+        return struct.unpack('<I', raw)[0]
 
+    def get_data_count(self) -> Optional[int]:
+        """有効計測値の数 (本子機の出荷状態では 2 = velocity + voltage)。"""
+        raw = self.read_i2c_block(AnemometerRegisters.REG_DATA_COUNT, 1)
+        return raw[0] if raw else None
+
+    def get_unit_types(self) -> Optional[List[int]]:
+        """各 value のシリアル順 BACnet engineering unit code (uint16[8] LE)。"""
+        raw = self.read_i2c_block(AnemometerRegisters.REG_UNIT_TYPE, 16)
+        if raw is None:
+            return None
+        return list(struct.unpack('<8H', raw))
+
+    def get_new_addr(self) -> Optional[int]:
+        """現在の I2C アドレス (EEPROM 値)。"""
+        raw = self.read_i2c_block(AnemometerRegisters.REG_NEW_ADDR, 1)
+        return raw[0] if raw else None
+
+    def get_name(self) -> Optional[str]:
+        """装置ラベル (最大 15 文字 ASCII)。NUL または 0xFF までを返す。空なら ''。"""
+        raw = self.read_i2c_block(AnemometerRegisters.REG_NAME,
+                                  AnemometerRegisters.NAME_LEN)
+        if raw is None:
+            return None
+        if len(raw) == 0 or raw[0] == 0xFF:   # 消去済 EEPROM への保険
+            return ''
+        nul = raw.find(0)
+        if nul >= 0:
+            raw = raw[:nul]
+        return raw.decode('ascii', errors='replace')
+
+    def set_name(self, name: str) -> bool:
+        """装置ラベルを設定 (15 文字 ASCII まで、超過分は切り捨て)。EEPROM 永続。"""
+        encoded = name.encode('ascii', errors='replace')[:AnemometerRegisters.NAME_LEN - 1]
+        padded  = encoded.ljust(AnemometerRegisters.NAME_LEN, b'\x00')
+        return self.write_i2c_block(AnemometerRegisters.REG_NAME, list(padded))
+
+    # ==================================================================
+    # POLL BLOCK (動的情報、毎周期読む)
+    # ==================================================================
+
+    def read_poll_block(self) -> Optional[Dict[str, Any]]:
+        """
+        POLL BLOCK (0x28-0x4B, 36 byte) を 1 トランザクションで読む。
+        status1/status2/value を同一スナップショットで取れるので整合性が高い。
+        Returns: {"status1": int, "status2": int, "values": List[float]} or None
+        """
+        raw = self.read_i2c_block(AnemometerRegisters.REG_POLL_BASE,
+                                  AnemometerRegisters.POLL_BLOCK_SIZE)
+        if raw is None:
+            return None
+        status1 = raw[AnemometerRegisters.POLL_OFS_STATUS1]
+        status2 = raw[AnemometerRegisters.POLL_OFS_STATUS2]
+        values  = list(struct.unpack('<8f',
+                                     raw[AnemometerRegisters.POLL_OFS_VALUE:
+                                         AnemometerRegisters.POLL_OFS_VALUE + 32]))
+        return {"status1": status1, "status2": status2, "values": values}
+
+    def get_status1(self) -> Optional[int]:
+        """状態フラグ (bit i = value[i] が stale / 異常。0xFF = 全 stale / 予熱中)。"""
+        raw = self.read_i2c_block(AnemometerRegisters.REG_STATUS1, 1)
+        return raw[0] if raw else None
+
+    def is_all_stale(self) -> bool:
+        """全計測値が信頼不能 (0xFF) か。予熱中の判定に使う。"""
+        return self.get_status1() == AnemometerRegisters.STATUS1_ALL_STALE
+
+    def is_value_valid(self, idx: int) -> bool:
+        """status1 の bit idx が立っていなければ True (= value[idx] は信頼できる)。"""
+        s = self.get_status1()
+        return s is not None and not (s & (1 << idx))
+
+    def get_status2(self) -> Optional[int]:
+        """計測値更新フラグ (1=新値あり, 0=未更新/ACK 済)。"""
+        raw = self.read_i2c_block(AnemometerRegisters.REG_STATUS2, 1)
+        return raw[0] if raw else None
+
+    def clear_status2(self) -> bool:
+        """Status2 を 0 に書き戻して新値の取得を ACK。"""
+        return self.write_i2c_block(AnemometerRegisters.REG_STATUS2, [0])
+
+    def get_values(self) -> Optional[List[float]]:
+        """value[0..7] を float のリストで取得 (32 byte 一括 read)。"""
+        raw = self.read_i2c_block(AnemometerRegisters.REG_VALUE, 32)
+        if raw is None:
+            return None
+        return list(struct.unpack('<8f', raw))
 
     def get_velocity(self) -> Optional[float]:
-        """
-        現在の風速[m/s]を取得する
-        Note: 基板からは[mm/s]で返ってくるため、1/1000して返す
-        """
-        val_bytes = self.read_register_with_crc(AnemometerConstants.ADDR_VELOCITY_HIGH, 2)
-        if val_bytes is None:
+        """value[0] = 風速 [m/s] (4byte ピンポイント read)。"""
+        offset = AnemometerRegisters.REG_VALUE \
+               + AnemometerRegisters.VAL_IDX_VELOCITY * 4
+        raw = self.read_i2c_block(offset, 4)
+        if raw is None:
             return None
-        # Big Endian uint16
-        mm_sec = struct.unpack('>H', val_bytes)[0]
-        return mm_sec / 1000.0
+        return struct.unpack('<f', raw)[0]
 
-
-    def get_temperature(self) -> Optional[float]:
-        """
-        現在の温度[C]を取得する
-        Note: 基板からは[100*K]で返ってくるため、1/100-273.15して返す
-        """
-        val_bytes = self.read_register_with_crc(AnemometerConstants.ADDR_TEMP_HIGH, 2)
-        if val_bytes is None:
+    def get_voltage(self) -> Optional[float]:
+        """value[1] = 風速計回路の生電圧 [V] (4byte ピンポイント read)。"""
+        offset = AnemometerRegisters.REG_VALUE \
+               + AnemometerRegisters.VAL_IDX_VOLTAGE * 4
+        raw = self.read_i2c_block(offset, 4)
+        if raw is None:
             return None
-        # Big Endian signed short
-        kelvin100 = struct.unpack('>H', val_bytes)[0]
-        return kelvin100 / 100.0 - 273.15
-    
+        return struct.unpack('<f', raw)[0]
 
-    def is_heating(self) -> Dict[str, Union[bool, int]]:
-        """
-        加熱中か否かを取得する
-        """
-        raw = self.read_i2c_block(AnemometerConstants.ADDR_STATUS, 1)
-        if not raw: return {}
+    # ==================================================================
+    # EXTENSION (本子機固有 R/W)
+    # ==================================================================
 
-        status_byte = raw[0]
-        return bool(status_byte & AnemometerConstants.STATUS_HEATING_MASK)
-
-
-    def get_version(self) -> int:
-        """
-        バージョンを取得する
-        """
-        raw = self.read_i2c_block(AnemometerConstants.ADDR_VERSION, 1)
-        return raw[0] if raw else 0
-    
-    
-    def get_unique_id(self) -> Optional[str]:
-        """
-        16バイトの製造ID+CRCを取得し、16進数文字列として返す
-        """
-        data_body = self.read_register_with_crc(AnemometerConstants.ADDR_ID_START, 16)
-        if data_body is None:
-            return None
-        # バイト列を2桁の16進数に変換して連結
-        return "".join(f"{b:02X}" for b in data_body)
-    
-    
-    def get_id_hash(self) -> Optional[int]:
-        """
-        製造IDから計算された32bitハッシュ値を取得する
-        """
-        # 4バイト分読み出す
-        data_body = self.read_register_with_crc(AnemometerConstants.ADDR_ID_HASH, 4)
-        if data_body is None:
-            return None
-        # Big Endianとしてアンパック (unsigned int)
-        return struct.unpack('>I', data_body)[0]
-
-
-    # ------------------------------------------------------------------
-    # 公開メソッド: 設定変更 (Read/Write Area)
-    # ------------------------------------------------------------------
+    def get_enable(self) -> Optional[bool]:
+        raw = self.read_i2c_block(AnemometerRegisters.REG_EXT_ENABLE, 1)
+        return (raw[0] != 0) if raw else None
 
     def set_enable(self, enable: bool) -> bool:
-        """
-        計測の有効/無効を設定 (1=Enable, 0=Disable/Sleep)
-        """
-        val = 1 if enable else 0
-        return self.write_i2c_block(AnemometerConstants.ADDR_ENABLE, [val])
+        """風速計回路の起動 (True=Enable, False=Disable→PWR_DOWN)。"""
+        return self.write_i2c_block(AnemometerRegisters.REG_EXT_ENABLE,
+                                    [1 if enable else 0])
 
+    def get_filter_n(self) -> Optional[int]:
+        raw = self.read_i2c_block(AnemometerRegisters.REG_EXT_FILTER_N, 1)
+        return raw[0] if raw else None
 
     def set_filter_n(self, n: int) -> bool:
-        """
-        平滑化フィルタの係数Nを設定
-        """
-        n = max(0, min(255, n))
-        return self.write_i2c_block(AnemometerConstants.ADDR_FILTER_N, [n])
-    
+        """平滑化フィルタ係数 (0~20)。"""
+        return self.write_i2c_block(AnemometerRegisters.REG_EXT_FILTER_N,
+                                    [max(0, min(20, n))])
 
-    def get_filter_n(self) -> int:
-        """
-        平滑化フィルタの係数Nを取得
-        """
-        return self.read_i2c_block(AnemometerConstants.ADDR_FILTER_N, 0x01)
-
-
-    def is_updated(self) -> bool:
-        """
-        データが更新されているか確認する
-        """
-        # updated レジスタを読み出す
-        res = self.read_i2c_block(AnemometerConstants.ADDR_UPDATED, 1)
-        return res and res[0] != 0
-    
-    
-    def clear_updated_flag(self):
-        self.write_i2c_block(AnemometerConstants.ADDR_UPDATED, [0])
-
-
-    def set_coefficients_A(self, coefs: List[float]) -> bool:
-        """
-        係数A (5つのfloat) を設定する
-        Note: ファームウェアに合わせてBig-Endian floatとして書き込む
-        """
-        # 5つのfloatを Big-Endian (>f) でバイト列化 (20 bytes)
-        data_bytes = bytearray()
-        for f in coefs:
-            data_bytes.extend(struct.pack('>f', f))
-
-        return self.write_register_with_crc(AnemometerConstants.ADDR_COEF_A_START, data_bytes)
-
-
-    def set_coefficients_B(self, coefs: List[float]) -> bool:
-        """
-        係数B (5つのfloat) を設定する
-        Note: ファームウェアに合わせてBig-Endian floatとして書き込む
-        """
-        # 5つのfloatを Big-Endian (>f) でバイト列化 (20 bytes)
-        data_bytes = bytearray()
-        for f in coefs:
-            data_bytes.extend(struct.pack('>f', f))
-
-        return self.write_register_with_crc(AnemometerConstants.ADDR_COEF_B_START, data_bytes)
-
-
-    def get_coefficients_A(self) -> Optional[List[float]]:
-        """現在の係数Aを読み出す"""
-        # float*5 (20bytes) + CRC (1byte)
-        data = self.read_register_with_crc(AnemometerConstants.ADDR_COEF_A_START,20)
-        
-        if data is None:
+    def get_coefficients_a(self) -> Optional[List[float]]:
+        raw = self.read_i2c_block(AnemometerRegisters.REG_EXT_COEF_A,
+                                  AnemometerRegisters.SIZE_COEF_ARRAY)
+        if raw is None:
             return None
-        # Big-Endian float としてアンパック
-        return list(struct.unpack('>fffff', data))
+        return list(struct.unpack('<5f', raw))
 
+    def set_coefficients_a(self, coefs: List[float]) -> bool:
+        """係数 A (float[5], LE) を一括書き込み。"""
+        if len(coefs) != AnemometerRegisters.EXT_COEF_LEN:
+            raise ValueError(f"coefs must have length {AnemometerRegisters.EXT_COEF_LEN}")
+        return self.write_i2c_block(AnemometerRegisters.REG_EXT_COEF_A,
+                                    list(struct.pack('<5f', *coefs)))
 
-    def get_coefficients_B(self) -> Optional[List[float]]:
-        """現在の係数Bを読み出す"""
-        # float*5 (20bytes) + CRC (1byte)
-        data = self.read_register_with_crc(AnemometerConstants.ADDR_COEF_B_START,20)
-        
-        if data is None:
+    def get_coefficients_b(self) -> Optional[List[float]]:
+        raw = self.read_i2c_block(AnemometerRegisters.REG_EXT_COEF_B,
+                                  AnemometerRegisters.SIZE_COEF_ARRAY)
+        if raw is None:
             return None
-        # Big-Endian float としてアンパック
-        return list(struct.unpack('>fffff', data))
+        return list(struct.unpack('<5f', raw))
 
+    def set_coefficients_b(self, coefs: List[float]) -> bool:
+        """係数 B (float[5], LE) を一括書き込み。"""
+        if len(coefs) != AnemometerRegisters.EXT_COEF_LEN:
+            raise ValueError(f"coefs must have length {AnemometerRegisters.EXT_COEF_LEN}")
+        return self.write_i2c_block(AnemometerRegisters.REG_EXT_COEF_B,
+                                    list(struct.pack('<5f', *coefs)))
+
+    def get_coefficients(self) -> Optional[Dict[str, List[float]]]:
+        """係数 A/B を 1 トランザクションでまとめて取得。"""
+        raw = self.read_i2c_block(AnemometerRegisters.REG_EXT_COEF_A,
+                                  AnemometerRegisters.SIZE_COEF_ARRAY * 2)
+        if raw is None:
+            return None
+        a = list(struct.unpack('<5f', raw[:20]))
+        b = list(struct.unpack('<5f', raw[20:40]))
+        return {'A': a, 'B': b}
+
+    # ==================================================================
+    # I2C アドレス変更 (OSL Addr Key + New Addr スキーム)
+    # ==================================================================
 
     def change_slave_address(self, new_addr_7bit: int) -> bool:
         """
-        I2Cスレーブアドレスを変更する。
-        Unlock Key(0xA5) と New Address を連続して書き込むことで変更を確定させる。
-        デバイスを再起動するまでアドレス変更は反映されないことに注意
-        
-        Args:
-            new_addr_7bit: 新しい7bit I2Cアドレス (例: 0x20)
-        
-        Returns:
-            bool: 書き込み成功ならTrue
+        I2C スレーブアドレスを変更する。
+
+        firmware 仕様上、鍵 (0xA5) と新アドレスは **1 トランザクションで連続書込**
+        しなければならない (addr_key は STOP ごとにクリアされるため)。ここでは
+        REG_ADDR_KEY (0x04) を起点に [0xA5, new_addr] を一括書き込みし、子機側で
+        0x04←0xA5 / 0x05←new_addr が自動インクリメントされる。
+
+        書込が成立すると子機は STOP 時に EEPROM 永続化 + TWI0.SADDR を即時反映する
+        (リセット不要)。以降のトランザクションは新アドレスで通信すること。
         """
-        # マジックナンバー
-        UNLOCK_KEY = 0xA5
-        
-        # [Unlock Key, New Address] の順でデータを構成
-        payload = [UNLOCK_KEY, new_addr_7bit]
-        
-        # ADDR_I2C_UNLOCKから2バイト分一気に書き込む
-        return self.write_i2c_block(AnemometerConstants.ADDR_I2C_UNLOCK, payload)
+        if not (0x08 <= new_addr_7bit <= 0x77):
+            raise ValueError("new_addr must be a valid 7bit I2C address (0x08-0x77)")
+        return self.write_i2c_block(
+            AnemometerRegisters.REG_ADDR_KEY,
+            [AnemometerRegisters.ADDR_KEY_UNLOCK, new_addr_7bit])
 
 
-# ------------------------------------------------------------------
-# 使用例
-# ------------------------------------------------------------------
+# ============================================================
+# 使用例: 接続〜情報取得〜サンプリング数回
+# ============================================================
 if __name__ == "__main__":
-    # 引数からシリアル番号を取得（なければ None）
     serial_num = sys.argv[1] if len(sys.argv) > 1 else None
-    sensor = AnemometerManager(serial_number=serial_num, slave_addr=0x10)
+    sensor = AnemometerManager(serial_number=serial_num)
 
     sensor.open()
-    if sensor.is_open:
-        print("=== Device Connection: SUCCESS ===")
-        
-        try:
-            # 1. デバイス情報・ステータス取得のテスト
-            print("\n--- Testing: Device Information ---")
-            uid = sensor.get_unique_id()
-            print(f"Unique ID:   {uid}")
-            
-            hash_val = sensor.get_id_hash()
-            print(f"ID Hash:     {hash_val}")
-            
-            status = sensor.is_heating()
-            print(f"Is Heating:  {status}")
-            
-            version = sensor.get_version()
-            print(f"Version:  {version}")
+    if not sensor.is_open:
+        print("Could not open device. Check CP2112 connection / serial number.")
+        sys.exit(1)
 
-            # 2. 設定変更のテスト
-            print("\n--- Testing: Configuration ---")
-            print("Setting Enable=True...")
-            sensor.set_enable(True)
-            
-            print("Setting Filter N=6...")
-            sensor.set_filter_n(6)
+    try:
+        print("=== INFO BLOCK ===")
+        dev_id = sensor.get_device_id()
+        print(f"Device ID  : 0x{dev_id:06X}" if dev_id is not None else "Device ID  : <read failed>")
+        print(f"Name       : {sensor.get_name()!r}")
+        print(f"Data Count : {sensor.get_data_count()}")
+        print(f"Unit Types : {sensor.get_unit_types()}")
+        print(f"I2C Addr   : {sensor.get_new_addr()}")
 
-            # 3. センサーデータ取得のテスト
-            print("\n--- Testing: Data Acquisition ---")
-            # データの更新フラグを確認
-            if sensor.is_updated():
-                print("Data update flag is SET.")
-                sensor.clear_updated_flag()
-                print("Data update flag CLEARED.")
+        # 起動時 enable の既定値は firmware 依存なので、必ず明示的に有効化する。
+        print("\n=== Enable + sample 5 times (1 Hz) ===")
+        sensor.set_enable(True)
+        sensor.set_filter_n(6)
+        time.sleep(1.0)        # 平滑化フィルタ立ち上げ
 
-            volt = sensor.get_voltage()
-            print(f"Voltage:     {volt} mV")
-            
-            vel = sensor.get_velocity()
-            print(f"Velocity:    {vel:.3f} m/s")
-            
-            vel = sensor.get_temperature()
-            print(f"Temperature:    {vel:.2f} C")
+        for i in range(5):
+            poll = sensor.read_poll_block()
+            if poll is None:
+                print(f"  [{i}] read failed")
+            else:
+                s1 = poll["status1"]
+                v  = poll["values"]
+                vel  = v[AnemometerRegisters.VAL_IDX_VELOCITY]
+                volt = v[AnemometerRegisters.VAL_IDX_VOLTAGE]
+                stale = " (ALL STALE / 予熱中)" if s1 == AnemometerRegisters.STATUS1_ALL_STALE else ""
+                print(f"  [{i}] status1=0x{s1:02X}{stale}  "
+                      f"vel={vel:7.3f} m/s  volt={volt:6.3f} V")
+            time.sleep(1.0)
 
-            # 4. 係数(Coefficients)の読み書きテスト
-            # ※現在の設定値を読み出し、微小に変更して戻すテスト
-            print("\n--- Testing: Coefficients (Group A) ---")
-            original_coefs = sensor.get_coefficients_A()
-            if original_coefs:
-                print(f"Original A:  {original_coefs}")
-                
-                # テスト用に少し値を変更（例：最初の要素に+0.01）
-                test_coefs = list(original_coefs)
-                test_coefs[0] += 0.01
-                
-                print("Writing modified coefficients...")
-                if sensor.set_coefficients_A(test_coefs):
-                    verified_coefs = sensor.get_coefficients_A()
-                    print(f"Verified A:  {verified_coefs}")
-                    
-                    # 元に戻す
-                    sensor.set_coefficients_A(original_coefs)
-                    print("Restored original coefficients.")
-                else:
-                    print("Failed to write coefficients (CRC error?).")
+        print("\n=== Coefficients ===")
+        print(f"  A: {sensor.get_coefficients_a()}")
+        print(f"  B: {sensor.get_coefficients_b()}")
 
-            # 5. I2Cアドレス変更（Unlock/Change）のインターフェース確認
-            print("\n--- Testing: Method Interfaces ---")
-            sensor.change_slave_address(0x10) # 実行する場合は注意
-            print("Interface for 'change_slave_address' is ready.")
-
-        except Exception as e:
-            print(f"\nAn error occurred during testing: {e}")
-        
-        finally:
-            sensor.close()
-            print("\nDevice Closed.")
-    else:
-        print("Could not open device. Check your connection or 'open()' return value.")
+    finally:
+        sensor.close()
+        print("\nClosed.")
