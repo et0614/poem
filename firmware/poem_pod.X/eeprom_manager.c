@@ -100,6 +100,12 @@ void EM_resetEEPROM()
         EEPROM_Write(ADDR_INIT_FLAG, 'T'); //初期化完了
 }
 
+//ネットワーク設定をデフォルト値に戻す（RAM上のみ。保存はEM_updateEEPROM）
+void EM_initNetworkSettings()
+{
+    initNetwork();
+}
+
 // </editor-fold>
 
 //EEPROMを読み込む

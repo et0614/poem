@@ -1,9 +1,11 @@
 #include "mcc_generated_files/system/system.h"
+#include "mcc_generated_files/system/ccp.h"
 #include "mcc_generated_files/timer/delay.h"
 #include "mcc_generated_files/timer/rtc.h"
 #include "mcc_generated_files/system/pins.h"
 
 #include <avr/wdt.h>
+#include <util/atomic.h>
 #include <util/delay_basic.h>
 
 #include "main.h"
@@ -23,6 +25,9 @@
 
 // SCAN ボタンのデバウンス用閾値 (ms)。連続して押下を検知するための最小間隔。
 #define SCAN_DEBOUNCE_MS        50
+
+// 完全初期化と判定する Reset スイッチの長押し時間 (ms)。HTTP 設定モード中のみ有効。
+#define FACTORY_RESET_HOLD_MS   5000
 
 //トップページHTML
 const char index_page_content[] =
@@ -104,7 +109,9 @@ int main(void)
     EM_loadEEPROM();
 
     // イベントハンドラ登録
-    TCB0_OverflowCallbackRegister(msecHandler); // 1msecタイマ
+    // TCB0 は周期割り込み (INT) モードのため、TOP (CCMP) 到達で立つのは CAPT フラグ
+    // (OVF は 0xFFFF からのラップでのみ立ち、INT モードでは発生しない)。
+    TCB0_CaptureCallbackRegister(msecHandler);  // 1msecタイマ
     RTC_SetOVFIsrCallback(secHandler);          // 1secタイマ (MQTT publish 要求)
 
     //WIZnetドライバにコールバック関数を登録
@@ -245,8 +252,41 @@ static void pollAndPublishOne(slave_node_t* node)
     }
 }
 
+// MilliTimer (1ms 毎インクリメント) を割り込みとの競合なしに読み出す。
+static uint32_t readMilliTimer(void)
+{
+    uint32_t t;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) { t = MilliTimer; }
+    return t;
+}
+
+// 完全初期化: ネットワーク設定 (IP/SN/GW/DNS/ブローカーIP/トピック名) をデフォルト値へ
+// 戻して EEPROM に保存し、Reset スイッチが離されるまで赤 LED 点滅で通知する。
+// 押下中に再起動すると再び HTTP 設定モードへ入ってしまうため、解放を待ってから再起動する。
+// この関数は戻らない。
+static void factoryReset(void)
+{
+    EM_initNetworkSettings();
+    EM_updateEEPROM();
+
+    while (true) {
+        wdt_reset();
+        if (IO_RESET_GetValue() == 0) {
+            blinkRedLED(1);   // 押下中は点滅を継続して初期化完了を通知
+            continue;
+        }
+        // チャタリングで解放と誤認したまま再起動しないよう、安定を確認する
+        DELAY_milliseconds(SCAN_DEBOUNCE_MS);
+        if (IO_RESET_GetValue() != 0) break;
+    }
+
+    // ソフトウェアリセット (Reset は解放済みなので MQTT 通信モードで立ち上がる)
+    ccp_write_io((void*)&RSTCTRL.SWRR, RSTCTRL_SWRST_bm);
+}
+
 // HTTP 設定モード: Reset スイッチ押し込み起動時のみ動作。Web 設定 UI を提供する。
 // MQTT は走らせない (HTTP と並走させると W5500 のソケット混線が発生するため)。
+// Reset スイッチを一度離した後、改めて 5 秒長押しすると完全初期化 → 再起動する。
 static void runHttpServerMode(void)
 {
     uint8_t http_socklist[] = {1};
@@ -263,9 +303,27 @@ static void runHttpServerMode(void)
     turnOnRedLED();    // 設定モード中は赤 LED 常時点灯
     turnOffGreenLED();
 
+    // 完全初期化 (Reset 長押し) の検出状態。
+    // モード突入時はまだ起動時の押し込みが継続しているため、一度離されてから判定を開始する。
+    bool release_seen = false;
+    bool pressing = false;
+    uint32_t press_start_ms = 0;
+
     while (true) {
         wdt_reset();
         httpServer_run(http_socklist[0]);
+
+        bool pressed = (IO_RESET_GetValue() == 0);
+        if (!release_seen) {
+            release_seen = !pressed;   // 起動時の押し込みの解放待ち
+        } else if (!pressed) {
+            pressing = false;
+        } else if (!pressing) {
+            pressing = true;
+            press_start_ms = readMilliTimer();
+        } else if (readMilliTimer() - press_start_ms >= FACTORY_RESET_HOLD_MS) {
+            factoryReset();   // 戻らない (再起動する)
+        }
     }
 }
 

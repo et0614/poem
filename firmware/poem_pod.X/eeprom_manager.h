@@ -38,6 +38,9 @@ void EM_updateEEPROM();
 //EEPROMを初期化する
 void EM_resetEEPROM();
 
+//ネットワーク設定をデフォルト値に戻す（RAM上のみ。保存はEM_updateEEPROM）
+void EM_initNetworkSettings();
+
 
 #ifdef	__cplusplus
 }
