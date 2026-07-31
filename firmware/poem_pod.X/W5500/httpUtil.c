@@ -19,12 +19,12 @@
 #include "../node_manager.h"
 #include "../utility.h"
 
-uint8_t http_get_cgi_handler(uint8_t * uri_name, uint8_t * buf, uint32_t * file_len)
+uint8_t http_get_cgi_handler(uint8_t * uri_name, uint8_t * uri, uint8_t * buf, uint32_t * file_len)
 {
 	uint8_t ret = HTTP_OK;
 	uint16_t len = 0;
 
-	if(predefined_get_cgi_processor(uri_name, buf, &len))
+	if(predefined_get_cgi_processor(uri_name, uri, buf, &len))
 	{
 		;
 	}
@@ -63,9 +63,25 @@ uint8_t http_post_cgi_handler(uint8_t * uri_name, st_http_request * p_http_reque
 // HTTP CGI 応答用バッファサイズ。httpServer 側で確保しているバッファサイズと一致させる。
 #define CGI_BUF_SIZE        2048
 
+// /devices.cgi の 1 ページあたり表示台数。応答バッファ (2048 byte) に全 64 台は
+// 載らないため分割する。ヘッダ ~710 + 行 ~170×5 + ナビ/フッタ ~250 ≈ 1.8 KB で収まる値。
+#define DEV_PAGE_SIZE       5
+
+// GET の URI (例: "/devices.cgi?p=2") からページ番号を取り出す。無指定・不正は 0。
+static uint8_t parsePageParam(const uint8_t* uri)
+{
+    if (!uri) return 0;
+    const char* q = strchr((const char*)uri, '?');
+    if (!q) return 0;
+    const char* p = strstr(q, "p=");
+    if (!p) return 0;
+    int v = atoi(p + 2);
+    return (v < 0 || v > 255) ? 0 : (uint8_t)v;
+}
+
 // /net.cgi GET: 現在のネットワーク設定をフォーム HTML で返す。
 // 戻り値: 1=処理した (buf 有効, *len 設定済み)、0=未処理 (上位で HTTP_FAILED にする)。
-uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * buf, uint16_t * len)
+uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * uri, uint8_t * buf, uint16_t * len)
 {
     if (strcmp((const char *)uri_name, "net.cgi") == 0) {
         const EM_NetworkSettings* s = &EM_Network_Settings;
@@ -119,10 +135,19 @@ uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * buf, uint16_t
     }
 
     // /devices.cgi GET: 検出済み子機一覧をテーブル + 名前編集フォームで返す。
+    // 全台は応答バッファに載らないため DEV_PAGE_SIZE 台ずつのページングとする (?p=N、0 始まり)。
     if (strcmp((const char *)uri_name, "devices.cgi") == 0) {
         char* p   = (char*)buf;
         char* end = (char*)buf + CGI_BUF_SIZE;
         int n;
+
+        uint8_t page_count = (NM_NodeCount + DEV_PAGE_SIZE - 1) / DEV_PAGE_SIZE;
+        if (page_count == 0) page_count = 1;
+        uint8_t page = parsePageParam(uri);
+        if (page >= page_count) page = page_count - 1;
+        uint8_t first = page * DEV_PAGE_SIZE;
+        uint8_t last  = first + DEV_PAGE_SIZE;
+        if (last > NM_NodeCount) last = NM_NodeCount;
 
         n = snprintf(p, end - p,
             "<!DOCTYPE html><html><head><title>PoEM-pod Devices</title>"
@@ -143,16 +168,17 @@ uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * buf, uint16_t
         if (n < 0 || n >= end - p) { *len = 0; return 0; }
         p += n;
 
-        // 子機テーブル本体。バッファ残量を見て途中で切る (オーバーフロー防止)。
-        // Addr 列を input 化したことで 1 行あたり ~70 byte 増えるので、break しきい値も広げる。
-        for (uint8_t i = 0; i < NM_NodeCount; i++) {
+        // 子機テーブル本体 (このページの分のみ)。バッファ残量を見て途中で切る (オーバーフロー防止)。
+        // パラメータ名は a00~a63 / n00~n63 の 2 桁固定。1 桁だと POST 側の strstr 検索で
+        // "n1" が "n10" に誤マッチするため、全キーを同じ長さに揃えて部分一致を排除する。
+        for (uint8_t i = first; i < last; i++) {
             if ((end - p) < 280) break;  // 残り 280 byte 切ったらフォーム閉じへ
             const slave_node_t* nd = &NM_Nodes[i];
             n = snprintf(p, end - p,
                 "<tr><td>%u"
-                "<td><input type=number name=a%u value=%u min=8 max=119>"
+                "<td><input type=number name=a%02u value=%u min=8 max=119>"
                 "<td>%lu<td>0x%02X<td>%u"
-                "<td><input type=text name=n%u value=\"%s\" maxlength=15></tr>",
+                "<td><input type=text name=n%02u value=\"%s\" maxlength=15></tr>",
                 (unsigned)i,
                 (unsigned)i, (unsigned)nd->i2c_addr,
                 (unsigned long)nd->device_id,
@@ -162,8 +188,28 @@ uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * buf, uint16_t
             p += n;
         }
 
+        // ページ移動ナビゲーション
+        n = snprintf(p, end - p, "</table><p>");
+        if (n < 0 || n >= end - p) { *len = 0; return 0; }
+        p += n;
+        if (page > 0) {
+            n = snprintf(p, end - p,
+                "<a class=btn href=\"/devices.cgi?p=%u\">&lt; Prev</a> ", (unsigned)(page - 1));
+            if (n < 0 || n >= end - p) { *len = 0; return 0; }
+            p += n;
+        }
+        n = snprintf(p, end - p, "Page %u/%u", (unsigned)(page + 1), (unsigned)page_count);
+        if (n < 0 || n >= end - p) { *len = 0; return 0; }
+        p += n;
+        if (page + 1 < page_count) {
+            n = snprintf(p, end - p,
+                " <a class=btn href=\"/devices.cgi?p=%u\">Next &gt;</a>", (unsigned)(page + 1));
+            if (n < 0 || n >= end - p) { *len = 0; return 0; }
+            p += n;
+        }
+
         n = snprintf(p, end - p,
-            "</table>"
+            "</p>"
             "<p><input type=submit value=\"Save Names\">"
             "<a class=btn href=/scan.cgi>Rescan I2C</a>"
             "<a class=btn href=/>Back</a></p>"
@@ -200,7 +246,8 @@ static uint8_t process_devices_post(uint8_t * uri, uint8_t * buf, uint16_t * len
     // ===== アドレス変更 (先に処理) =============================================
     // 同じ POST 内でアドレスと名前の両方が来ても、アドレス変更後に新アドレスで name を書ける。
     for (uint8_t i = 0; i < NM_NodeCount; i++) {
-        snprintf(param_name, sizeof(param_name), "a%u", (unsigned)i);
+        // 2 桁固定 (a00~a63)。フォーム側と揃える。1 桁だと strstr の部分一致事故が起きる。
+        snprintf(param_name, sizeof(param_name), "a%02u", (unsigned)i);
         uint8_t* val = get_http_param_value((char*)uri, param_name);
         if (!val) continue;
 
@@ -217,7 +264,7 @@ static uint8_t process_devices_post(uint8_t * uri, uint8_t * buf, uint16_t * len
 
     // ===== 名前変更 ============================================================
     for (uint8_t i = 0; i < NM_NodeCount; i++) {
-        snprintf(param_name, sizeof(param_name), "n%u", (unsigned)i);
+        snprintf(param_name, sizeof(param_name), "n%02u", (unsigned)i);
         uint8_t* val = get_http_param_value((char*)uri, param_name);
         if (!val) continue;
 

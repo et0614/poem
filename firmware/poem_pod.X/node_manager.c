@@ -91,6 +91,42 @@ bool NM_writeAddress(slave_node_t* node, uint8_t new_addr)
 // アドレスチェックと情報読出のそれぞれを 3 回までリトライする。
 #define SCAN_RETRY_MAX  3
 
+// 試験用のダミー子機数。実子機が揃っていなくても Web UI (デバイス一覧のページング等) を
+// 確認できるよう、スキャン後にリストへ架空の子機を追加する。実運用ビルドでは 0 にすること。
+#define NM_DUMMY_NODE_COUNT 0
+
+#if NM_DUMMY_NODE_COUNT > 0
+// 実子機と衝突しない I²C アドレスを走査上限 (0x77) 側から割り当ててダミーを追加する。
+// 実在しないため計測値は全て stale (status1=0xFF) とし、名前/アドレスの書き込みは
+// I²C 応答がなく失敗するだけで実害はない。
+static void appendDummyNodes(void)
+{
+    uint8_t addr = I2C_ADDR_SCAN_LAST;
+    for (uint8_t i = 0; i < NM_DUMMY_NODE_COUNT && NM_NodeCount < MAX_NODES; i++) {
+        // 実子機・追加済みダミーと重複しないアドレスまで下る
+        while (addr >= I2C_ADDR_SCAN_FIRST) {
+            bool used = false;
+            for (uint8_t j = 0; j < NM_NodeCount; j++) {
+                if (NM_Nodes[j].i2c_addr == addr) { used = true; break; }
+            }
+            if (!used) break;
+            addr--;
+        }
+        if (addr < I2C_ADDR_SCAN_FIRST) return;  // 空きアドレスなし
+
+        slave_node_t* nd = &NM_Nodes[NM_NodeCount];
+        memset(nd, 0, sizeof(*nd));
+        nd->i2c_addr   = addr--;
+        nd->device_id  = 900001UL + i;
+        nd->data_count = 2;
+        nd->status1    = STATUS1_ALL_STALE;
+        nd->seq        = SEQ_INITIAL;
+        snprintf(nd->name, NODE_NAME_LEN, "DUMMY%02u", (unsigned)(i + 1));
+        NM_NodeCount++;
+    }
+}
+#endif
+
 uint8_t NM_scan(void)
 {
     NM_NodeCount = 0;
@@ -115,6 +151,10 @@ uint8_t NM_scan(void)
             }
         }
     }
+
+#if NM_DUMMY_NODE_COUNT > 0
+    appendDummyNodes();
+#endif
 
     return NM_NodeCount;
 }
