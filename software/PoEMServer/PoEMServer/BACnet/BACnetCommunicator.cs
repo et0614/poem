@@ -17,6 +17,18 @@ namespace BaCSharp
       arr[arr.Length - 1] = obj;
       storage.Objects = arr;
     }
+
+    /// <summary>
+    /// 指定インスタンス番号範囲 [first, endExclusive) のオブジェクトを一括削除する
+    /// (Device オブジェクトは対象外)。子機のアドレス変更時にブロック単位で撤去するのに使う。
+    /// </summary>
+    public static void RemoveObjectsInRange(this DeviceStorage storage, uint first, uint endExclusive)
+    {
+      storage.Objects = storage.Objects
+        .Where(o => o.Type == System.IO.BACnet.BacnetObjectTypes.OBJECT_DEVICE
+                 || o.Instance < first || o.Instance >= endExclusive)
+        .ToArray();
+    }
   }
 
   public class BACnetCommunicator

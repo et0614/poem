@@ -9,9 +9,16 @@ namespace PoEMServer
     /// </summary>
     internal class NodeConfigPayload
     {
-        /// <summary>子機の DeviceID (FNV-1a 22bit ハッシュ、BACnet Object Instance 互換, 0..4194302)</summary>
+        /// <summary>子機の DeviceID (FNV-1a 22bit ハッシュ、個体識別用)</summary>
         [JsonPropertyName("id")]
         public uint Id { get; set; }
+
+        /// <summary>
+        /// 子機の I²C アドレス (7bit, 8..119)。BACnet インスタンス番号の基数 (adr×100) に使う。
+        /// このフィールドが無い旧ファームのペイロードでは 0 になる (→ 登録拒否)。
+        /// </summary>
+        [JsonPropertyName("adr")]
+        public byte I2cAddr { get; set; }
 
         /// <summary>装置ラベル (子機の EEPROM 永続、最大 15 文字)</summary>
         [JsonPropertyName("name")]

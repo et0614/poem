@@ -223,8 +223,10 @@ uint16_t NM_buildConfigJson(const slave_node_t* node, char* buf, uint16_t bufsiz
     char* end = buf + bufsize;
     int   n;
 
-    n = snprintf(p, end - p, "{\"id\":%lu,\"name\":\"%s\",\"cnt\":%u,\"u\":[",
-                 (unsigned long)node->device_id, node->name, (unsigned)node->data_count);
+    // adr (I²Cアドレス) は PoEMServer 側で BACnet インスタンス番号の基数 (adr×100) に使う
+    n = snprintf(p, end - p, "{\"id\":%lu,\"adr\":%u,\"name\":\"%s\",\"cnt\":%u,\"u\":[",
+                 (unsigned long)node->device_id, (unsigned)node->i2c_addr,
+                 node->name, (unsigned)node->data_count);
     if (n < 0 || n >= end - p) return 0;
     p += n;
 
