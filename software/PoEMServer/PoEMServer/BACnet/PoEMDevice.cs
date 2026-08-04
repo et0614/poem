@@ -33,6 +33,11 @@ namespace PoEMServer.BACnet
     ///   base+4   AnalogInput      Seq (シーケンス番号)
     ///   base+5   AnalogInput      DataCount
     ///   base+10..base+17  AnalogInput  value[0..7] (UNITS は config の u[i] から)
+    ///
+    /// 子機が I²C 不達になると親機は最終値を stale フラグ (status1 の該当 bit) 付きで
+    /// publish し続ける。本クラスはこれを BACnet の作法へ写す: 該当 value オブジェクトの
+    /// PRESENT_VALUE は最終有効値のまま凍結し、STATUS_FLAGS の FAULT ビットと
+    /// RELIABILITY (COMMUNICATION_FAILURE) で「値が信頼できない」ことを示す。
     /// </summary>
     internal class PoEMDevice
     {
@@ -273,6 +278,22 @@ namespace PoEMServer.BACnet
                 {
                     WriteAnalogInput(b + 10u + (uint)i, data.Values![i]);
                 }
+
+                // status1 (per-value の stale bitmask) の変化分だけ FAULT / RELIABILITY を更新する。
+                // 毎秒書き換えると COV 通知やストレージ書込が無駄に走るため、変化時のみ。
+                if (data.Status1 != child.LastStatus1)
+                {
+                    for (int i = 0; i < child.DataCount; i++)
+                    {
+                        bool wasFault = ((child.LastStatus1 >> i) & 1) != 0;
+                        bool isFault = ((data.Status1 >> i) & 1) != 0;
+                        if (wasFault != isFault)
+                        {
+                            WriteValueFault(b + 10u + (uint)i, isFault);
+                        }
+                    }
+                    child.LastStatus1 = data.Status1;
+                }
             }
         }
 
@@ -284,6 +305,9 @@ namespace PoEMServer.BACnet
         {
             uint b = child.InstanceBase;
             string disp = DisplayName(child);
+
+            // オブジェクトは STATUS_FLAGS="0000" / RELIABILITY=0 で生成されるため、フォルト追跡もリセット
+            child.LastStatus1 = 0x00;
 
             AddDateTimeValue(b + 0u, $"{disp}_DT", $"Last data publish time of {disp}", DateTime.Now);
             AddCharString  (b + 1u, $"{disp}_ID", $"DeviceID (FNV-1a 22bit) of {disp}", $"{child.DeviceId}");
@@ -326,6 +350,10 @@ namespace PoEMServer.BACnet
         #region 低レベルヘルパ (オブジェクト追加 / プロパティ書込)
 
         private const ushort BACNET_UNITS_NO_UNITS = 95;
+
+        /// <summary>BACnet Reliability 列挙値 (ASHRAE 135)</summary>
+        private const uint BACNET_RELIABILITY_NO_FAULT_DETECTED = 0;
+        private const uint BACNET_RELIABILITY_COMMUNICATION_FAILURE = 12;
 
         // NuGet 版 Property は (id, tag, value) コンストラクタが無いので
         // オブジェクト初期化子で同等の構築を行う小さなラッパ。
@@ -389,6 +417,25 @@ namespace PoEMServer.BACnet
                     MakeProp(BacnetPropertyIds.PROP_UNITS,              BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED, unit.ToString()),
                 }
             });
+        }
+
+        /// <summary>
+        /// 計測値 AI オブジェクトのフォルト状態を設定する。
+        /// fault=true で STATUS_FLAGS の FAULT ビットを立て、RELIABILITY を
+        /// COMMUNICATION_FAILURE にする (PRESENT_VALUE は最終有効値のまま)。
+        /// </summary>
+        private void WriteValueFault(uint instance, bool fault)
+        {
+            BacnetObjectId oid = new(BacnetObjectTypes.OBJECT_ANALOG_INPUT, instance);
+
+            // STATUS_FLAGS: {IN_ALARM, FAULT, OVERRIDDEN, OUT_OF_SERVICE}
+            Communicator.Storage.WriteProperty(oid, BacnetPropertyIds.PROP_STATUS_FLAGS,
+                new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING,
+                    BacnetBitString.Parse(fault ? "0100" : "0000")));
+
+            Communicator.Storage.WriteProperty(oid, BacnetPropertyIds.PROP_RELIABILITY,
+                new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED,
+                    fault ? BACNET_RELIABILITY_COMMUNICATION_FAILURE : BACNET_RELIABILITY_NO_FAULT_DETECTED));
         }
 
         private void WriteAnalogInput(uint instance, double value)
@@ -492,6 +539,9 @@ namespace PoEMServer.BACnet
             public string Name = "";
             public int DataCount;
             public ushort[] UnitTypes = System.Array.Empty<ushort>();
+
+            /// <summary>直近に BACnet へ反映した status1 (FAULT/RELIABILITY の差分更新用)</summary>
+            public byte LastStatus1;
         }
     }
 }
