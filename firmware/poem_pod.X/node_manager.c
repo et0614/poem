@@ -159,6 +159,36 @@ uint8_t NM_scan(void)
     return NM_NodeCount;
 }
 
+// 稼働中の増設検出用の増分スキャン: 既存リストに無いアドレスだけを走査して追加する。
+// NM_scan と違い既存ノードの状態 (seq 等) を保持する。戻り値は新規追加数。
+// リトライは行わない (周期的に呼ばれるため、次周期が実質のリトライになる)。
+// 注意: 応答が途絶えた既存ノードのアドレスに「別の新しい子機」を付けても、リスト上は
+// 旧個体のままになる。個体の入れ替えを反映するには SCAN ボタンで全走査すること。
+uint8_t NM_scanNewNodes(void)
+{
+    uint8_t added = 0;
+
+    for (uint8_t addr = I2C_ADDR_SCAN_FIRST;
+         addr <= I2C_ADDR_SCAN_LAST && NM_NodeCount < MAX_NODES;
+         addr++)
+    {
+        bool known = false;
+        for (uint8_t j = 0; j < NM_NodeCount; j++) {
+            if (NM_Nodes[j].i2c_addr == addr) { known = true; break; }
+        }
+        if (known) continue;
+
+        if (!I2C_IsConnected(addr)) continue;
+
+        if (readInfoBlock(addr, &NM_Nodes[NM_NodeCount])) {
+            NM_NodeCount++;
+            added++;
+        }
+    }
+
+    return added;
+}
+
 bool NM_pollOne(slave_node_t* node)
 {
     uint8_t reg = POLL_BLOCK_OFFSET;

@@ -28,6 +28,11 @@ void NM_init(void);
 // 戻り値: 検出した子機の数。
 uint8_t NM_scan(void);
 
+// 増分スキャン: 既存リストに無いアドレスだけを走査し、応答した子機を末尾に追加する。
+// 既存ノードの状態は保持される。稼働中の増設検出 (定期実行) 用。
+// 戻り値: 新規に追加した子機の数。
+uint8_t NM_scanNewNodes(void);
+
 // 指定した子機の状態 (Status1/2 + Value) を I²C で読み取り、構造体に反映する。
 // 戻り値: true = 読み取り成功、false = 通信失敗。
 bool NM_pollOne(slave_node_t* node);

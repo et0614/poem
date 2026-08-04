@@ -200,19 +200,24 @@ static bool scanButtonPressed(void)
     return pressed;
 }
 
-// 検出した全子機について config トピックを 1 回ずつ publish する。
-static void publishAllConfigs(void)
+// 1 子機分の config トピックを publish する。
+static void publishConfigOne(slave_node_t* node)
 {
     char    topic[24];
     uint8_t payload[256];
 
+    NM_buildConfigTopic(node, topic, sizeof(topic));
+    uint16_t len = NM_buildConfigJson(node, (char*)payload, sizeof(payload));
+    if (len == 0) return;
+    MA_publish(topic, payload, len);
+    wdt_reset();
+}
+
+// 検出した全子機について config トピックを 1 回ずつ publish する。
+static void publishAllConfigs(void)
+{
     for (uint8_t i = 0; i < NM_NodeCount; i++) {
-        slave_node_t* node = &NM_Nodes[i];
-        NM_buildConfigTopic(node, topic, sizeof(topic));
-        uint16_t len = NM_buildConfigJson(node, (char*)payload, sizeof(payload));
-        if (len == 0) continue;
-        MA_publish(topic, payload, len);
-        wdt_reset();
+        publishConfigOne(&NM_Nodes[i]);
     }
 }
 
@@ -327,12 +332,21 @@ static void runHttpServerMode(void)
     }
 }
 
+// 新規子機の自動検出 (増分スキャン) の実行周期 [s]。
+// 全アドレス走査 (SCAN ボタン相当) と違い既存子機の状態を壊さないため、定期実行できる。
+#define AUTOSCAN_PERIOD_SEC 10
+
 // MQTT 通信モード: 通常起動 (Reset 非押下) 時の本番運用。
 //   - 起動後ブローカへ接続。失敗中は赤 LED が 2 回点滅で通知。
+//   - 接続確立のたび (初回 + 再接続) に全走査 + config 全送信。
+//     ブローカ (PoEMServer) 側が再起動して子機情報を失っていても自動復旧する。
 //   - 1 秒周期で全子機を I²C ポーリング → MQTT publish。完了で緑 LED 1 回点滅。
+//   - AUTOSCAN_PERIOD_SEC ごとに増分スキャンし、増設された子機の config を動的に送信。
 //   - SCAN ボタンで子機再走査 + config 再送信 (緑 LED 点滅で通知)。
 static void runMqttClientMode(void)
 {
+    uint8_t autoscan_countdown = AUTOSCAN_PERIOD_SEC;
+
     NM_init();
 
     // 初回接続: 成功するまでブロック (赤 LED 2 回点滅で外部に状況通知)
@@ -341,6 +355,9 @@ static void runMqttClientMode(void)
         DELAY_milliseconds(2000);
         wdt_reset();
     }
+
+    // 接続確立: 子機を検出して config を送信 (サーバ側の登録を確立する)
+    handleScanRequest();
 
     while (true) {
         wdt_reset();
@@ -353,6 +370,9 @@ static void runMqttClientMode(void)
                 DELAY_milliseconds(3000);
                 wdt_reset();
             }
+            // 再接続成立: サーバが再起動して子機情報を失っている可能性があるため
+            // 全走査 + config 再送信で登録を回復する
+            handleScanRequest();
         }
 
         // MQTT keepalive 兼 受信処理
@@ -371,6 +391,16 @@ static void runMqttClientMode(void)
                 wdt_reset();
             }
             blinkGreenLED(1);   // 1 周期分の publish 完了通知
+
+            // 増設された子機の自動検出: 新規分だけ config を送信する
+            if (--autoscan_countdown == 0) {
+                autoscan_countdown = AUTOSCAN_PERIOD_SEC;
+                uint8_t added = NM_scanNewNodes();
+                for (uint8_t i = NM_NodeCount - added; i < NM_NodeCount; i++) {
+                    publishConfigOne(&NM_Nodes[i]);
+                }
+                if (added > 0) blinkGreenLED(2);   // 増設検出の通知
+            }
         }
     }
 }
