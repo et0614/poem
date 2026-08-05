@@ -43,7 +43,14 @@ namespace PoEMServer.BACnet
     {
         #region 定数
 
-        private const string DATE_TIME_FORMAT = "yyyy-MM-ddTHH:mm:ss.fff";
+        /// <summary>
+        /// DATETIME を文字列で持つときの書式。ライブラリ (System.IO.BACnet.Storage.Property) が
+        /// ParseExact("yyyy/MM/dd-HH:mm:ss.ff") で読むため、これに一致させる必要がある
+        /// (bacnet-stack 互換。小数部はミリ秒ではなく 1/100 秒の 2 桁)。
+        /// 一致しないと解析に失敗し、base64 フォールバックも外れて PRESENT_VALUE が null になる。
+        /// 小数部は <see cref="FormatDateTime"/> で付加する。
+        /// </summary>
+        private const string DATE_TIME_FORMAT = "yyyy/MM/dd-HH:mm:ss.";
 
         /// <summary>子機 1 つあたりの BACnet Instance 番号確保枠 (base = I²Cアドレス × この値)</summary>
         private const uint INSTANCE_BLOCK = 100;
@@ -355,6 +362,16 @@ namespace PoEMServer.BACnet
         private const uint BACNET_RELIABILITY_NO_FAULT_DETECTED = 0;
         private const uint BACNET_RELIABILITY_COMMUNICATION_FAILURE = 12;
 
+        /// <summary>
+        /// DATETIME を Property.SerializeValue と同一の表現にする。
+        /// 小数部は 1/100 秒 2 桁なので、ミリ秒を 10 で割って付加する。
+        /// </summary>
+        private static string FormatDateTime(DateTime value)
+        {
+            return value.ToString(DATE_TIME_FORMAT, System.Globalization.CultureInfo.InvariantCulture)
+                 + (value.Millisecond / 10).ToString("D2", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         // NuGet 版 Property は (id, tag, value) コンストラクタが無いので
         // オブジェクト初期化子で同等の構築を行う小さなラッパ。
         private static Property MakeProp(BacnetPropertyIds id, BacnetApplicationTags tag, string value)
@@ -374,7 +391,7 @@ namespace PoEMServer.BACnet
                     MakeProp(BacnetPropertyIds.PROP_OBJECT_NAME,        BacnetApplicationTags.BACNET_APPLICATION_TAG_CHARACTER_STRING, name),
                     MakeProp(BacnetPropertyIds.PROP_OBJECT_TYPE,        BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED, "44"),
                     MakeProp(BacnetPropertyIds.PROP_DESCRIPTION,        BacnetApplicationTags.BACNET_APPLICATION_TAG_CHARACTER_STRING, description),
-                    MakeProp(BacnetPropertyIds.PROP_PRESENT_VALUE,      BacnetApplicationTags.BACNET_APPLICATION_TAG_DATETIME, value.ToString(DATE_TIME_FORMAT)),
+                    MakeProp(BacnetPropertyIds.PROP_PRESENT_VALUE,      BacnetApplicationTags.BACNET_APPLICATION_TAG_DATETIME, FormatDateTime(value)),
                     MakeProp(BacnetPropertyIds.PROP_STATUS_FLAGS,       BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING, "0000"),
                 }
             });
