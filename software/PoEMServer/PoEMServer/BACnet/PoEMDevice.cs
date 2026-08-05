@@ -32,6 +32,7 @@ namespace PoEMServer.BACnet
     ///   base+3   AnalogInput      Status1 (生 bitmask)
     ///   base+4   AnalogInput      Seq (シーケンス番号)
     ///   base+5   AnalogInput      DataCount
+    ///   base+6   DateTimeValue    最終正常データ受信日時 (status1==0x00 のときのみ更新)
     ///   base+10..base+17  AnalogInput  value[0..7] (UNITS は config の u[i] から)
     ///
     /// 子機が I²C 不達になると親機は最終値を stale フラグ (status1 の該当 bit) 付きで
@@ -277,6 +278,11 @@ namespace PoEMServer.BACnet
                 uint b = child.InstanceBase;
 
                 WriteDateTime(b + 0u, DateTime.Now);
+                if (data.Status1 == 0x00)
+                {
+                    // 全計測値が有効なデータのみ「最終正常データ受信日時」を進める
+                    WriteDateTime(b + 6u, DateTime.Now);
+                }
                 WriteAnalogInput(b + 3u, data.Status1);
                 WriteAnalogInput(b + 4u, data.Seq);
 
@@ -322,6 +328,10 @@ namespace PoEMServer.BACnet
             AddAnalogInput (b + 3u, $"{disp}_ST",  $"Status1 bitmask of {disp}", 0, BACNET_UNITS_NO_UNITS);
             AddAnalogInput (b + 4u, $"{disp}_SEQ", $"Sequence number of {disp}", 0, BACNET_UNITS_NO_UNITS);
             AddAnalogInput (b + 5u, $"{disp}_CNT", $"Active value count of {disp}", child.DataCount, BACNET_UNITS_NO_UNITS);
+            // base+6: 全計測値が有効 (status1==0x00) なデータを最後に受信した日時。
+            // base+0 が「生存信号」なのに対し、こちらは「値がいつまで信頼できたか」を示す。
+            // 生成時点では正常データ未受信だが、便宜上生成時刻を初期値とする (base+0 と同じ扱い)。
+            AddDateTimeValue(b + 6u, $"{disp}_NDT", $"Last normal data (status1==0) time of {disp}", DateTime.Now);
 
             for (int i = 0; i < child.DataCount; i++)
             {
