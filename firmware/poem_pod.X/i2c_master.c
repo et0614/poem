@@ -1,5 +1,6 @@
 #include "i2c_master.h"
 #include "mcc_generated_files/i2c_host/twi1.h"
+#include "mcc_generated_files/i2c_host/i2c_host_event_types.h"  // twi1_Status
 
 #include <avr/io.h>     // TWI1.MSTATUS の参照 (診断用)
 
@@ -24,6 +25,27 @@ static void i2c_recover_bus(void)
     // TWI を再初期化。ハング状態のバス状態機械を IDLE に戻す。
     TWI1_Deinitialize();
     TWI1_Initialize();
+
+    // TWI1_Initialize()/Deinitialize() はレジスタしか触らず、ドライバ側の状態
+    // (twi1_Status) には一切手を付けない。busy を false にするのは TWI1_Close() 等の
+    // 静的関数だけで、これらは TWI1_Tasks() が状態機械を最後まで進めたときにしか
+    // 呼ばれない。転送が完了しないまま再初期化すると割り込みフラグごと消えるため、
+    // 状態機械は二度と前へ進めず busy が真のまま固着する。
+    //
+    // TWI1_IsBusy() は busy も見るので、これを落とさない限り以降の転送開始は
+    // すべて失敗し続け、pod の電源を入れ直すまで全センサの読み出しが止まる。
+    // 実機で mst=1 (バスは IDLE) のまま fail と rcv だけが増え続ける状態を観測して
+    // 確認した。
+    twi1_Status.busy         = false;
+    twi1_Status.address      = 0xFF;
+    twi1_Status.writePtr     = NULL;
+    twi1_Status.readPtr      = NULL;
+    twi1_Status.writeLength  = 0;
+    twi1_Status.readLength   = 0;
+    twi1_Status.switchToRead = false;
+    twi1_Status.errorState   = I2C_ERROR_NONE;
+    twi1_Status.state        = I2C_STATE_IDLE;
+
     if (i2c_recover_count < 0xFFFF) i2c_recover_count++;
 }
 
