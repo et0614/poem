@@ -31,6 +31,12 @@ bool I2C_WriteRead(uint8_t address, const uint8_t *writeData, size_t writeLen, u
 // 1バイト書いてStop (特殊用途)
 bool I2C_WriteByteAndStop(uint8_t address, uint8_t data);
 
+// I2C の診断情報を取得する。不要な項目には NULL を渡してよい。
+//   mstatus      : TWI1.MSTATUS の生値。下位 2bit が BUSSTATE (1=IDLE)
+//   failCount    : 転送開始失敗とハングタイムアウトの累計 (NACK は含まない)
+//   recoverCount : バス強制復帰を実行した累計
+void I2C_GetDiag(uint8_t *mstatus, uint16_t *failCount, uint16_t *recoverCount);
+
 #ifdef	__cplusplus
 }
 #endif
