@@ -206,11 +206,26 @@ bool NM_pollOne(slave_node_t* node)
     // ※ slave 側は ATOMIC_BLOCK で書き込んでいても、こちらの read は 1 バイトずつ
     //   別 ISR に分かれるため、status2==0 のタイミングの float 領域はバイト裂け
     //   (tearing) で 0 などに化ける可能性がある。これを取り込まないことで防ぐ。
+    // ※ status2 のバイト自体が化けて 1 に見えた場合、上のガードは抜けてしまう。
+    //   その場合 float 領域は任意のビットパターンになり、指数部が全 1 なら NaN/Inf になる。
+    //   NaN を value[] に入れると NM_buildDataJson が "nan" を出力し、JSON として不正なため
+    //   PoEMServer 側のデシリアライズがメッセージ全体で失敗する。さらに NaN は次の正常値が
+    //   来るまで value[] に残り続けるので、その子機は恒久的に更新が止まる。
+    //   そこで 1 要素ずつ検査し、有限値でなければ取り込まず前回値を維持して stale を立てる。
     if (node->status2 == 1) {
         // AVR は LE なので memcpy で OK
-        memcpy(node->value,
-               &buf[REG_VALUE - POLL_BLOCK_OFFSET],
-               sizeof(float) * NODE_MAX_VALUES);
+        const uint8_t* src = &buf[REG_VALUE - POLL_BLOCK_OFFSET];
+        for (uint8_t i = 0; i < NODE_MAX_VALUES; i++) {
+            float v;
+            memcpy(&v, src + (uint16_t)i * sizeof(float), sizeof(float));
+            if (isfinite(v)) {
+                node->value[i] = v;
+            } else if (i < node->data_count) {
+                // stale ビットは有効長の範囲だけ立てる。範囲外まで立てると status1 が
+                // 0x00 にならず、PoEMServer 側の「最終正常データ受信日時」が更新されなくなる。
+                node->status1 |= (uint8_t)(1u << i);
+            }
+        }
     }
 
     return true;
