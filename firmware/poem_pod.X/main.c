@@ -7,6 +7,7 @@
 #include <avr/wdt.h>
 #include <util/atomic.h>
 #include <util/delay_basic.h>
+#include <stdio.h>
 
 #include "main.h"
 #include "hal_io.h"
@@ -213,6 +214,27 @@ static void publishConfigOne(slave_node_t* node)
     wdt_reset();
 }
 
+// pod 自身の I2C 状態を publish する。
+//
+// サーバはトピックを判定する前に受信メッセージを無条件でログ出力し、nodes/config/ と
+// nodes/data/ 以外は無視する。したがってサーバを改修しなくてもこのトピックはログに残る。
+// バス固着が再発したときに MSTATUS と復帰回数を確認するための診断用。
+static void publishDiag(void)
+{
+    uint8_t  mstatus;
+    uint16_t failCount, recoverCount;
+    I2C_GetDiag(&mstatus, &failCount, &recoverCount);
+
+    char payload[64];
+    int len = snprintf(payload, sizeof(payload),
+                       "{\"mst\":%u,\"fail\":%u,\"rcv\":%u}",
+                       (unsigned)mstatus, (unsigned)failCount, (unsigned)recoverCount);
+    if (len <= 0) return;
+
+    MA_publish("nodes/diag/pod", (const uint8_t*)payload, (uint16_t)len);
+    wdt_reset();
+}
+
 // 検出した全子機について config トピックを 1 回ずつ publish する。
 static void publishAllConfigs(void)
 {
@@ -390,6 +412,7 @@ static void runMqttClientMode(void)
                 pollAndPublishOne(&NM_Nodes[i]);
                 wdt_reset();
             }
+            publishDiag();      // pod 自身の I2C 状態 (診断用)
             blinkGreenLED(1);   // 1 周期分の publish 完了通知
 
             // 増設された子機の自動検出: 新規分だけ config を送信する
