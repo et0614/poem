@@ -20,6 +20,9 @@ extern "C" {
 extern slave_node_t NM_Nodes[MAX_NODES];
 extern uint8_t      NM_NodeCount;
 
+// スキャン (NM_scan / NM_scanNewNodes) を実行した累計。診断用。
+extern uint16_t     NM_ScanCount;
+
 // 起動時に呼び出す。リストを空にする。
 void NM_init(void);
 
