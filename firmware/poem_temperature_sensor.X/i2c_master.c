@@ -1,5 +1,6 @@
 #include "i2c_master.h"
 #include "mcc_generated_files/i2c_host/twi1.h"
+#include "mcc_generated_files/i2c_host/i2c_host_event_types.h"  // twi1_Status
 
 // I2C バス完了待ちの上限。TWI0_IsBusy/Tasks を繰り返し回すループの反復回数で
 // 表現する。F_CPU = 24 MHz、1 反復あたり 100〜200 cycle 程度として概ね 0.8〜1.6 秒
@@ -13,6 +14,37 @@ static void i2c_recover_bus(void)
     // TWI を再初期化。ハング状態のバス状態機械を IDLE に戻す。
     TWI1_Deinitialize();
     TWI1_Initialize();
+
+    // TWI1_Initialize()/Deinitialize() はレジスタしか触らず、ドライバ側の状態
+    // (twi1_Status) には手を付けない。busy を false にするのは TWI1_Close() 等の
+    // 静的関数だけで、これらは TWI1_Tasks() が状態機械を最後まで進めたときにしか
+    // 呼ばれない。転送が完了しないまま再初期化すると割り込みフラグごと消えるため、
+    // 状態機械は二度と前へ進めず busy が真のまま固着する。
+    //
+    // TWI1_IsBusy() は busy も参照するので、これを落とさない限り以降の転送開始は
+    // すべて失敗し続け、このセンサは電源を入れ直すまで SHT4x を読めなくなる。
+    // 親機からの読み出しには正常に応答するため、外からは「生きているが値だけが
+    // 更新されない」ようにしか見えず、原因を追いにくい。
+    twi1_Status.busy         = false;
+    twi1_Status.address      = 0xFF;
+    twi1_Status.writePtr     = NULL;
+    twi1_Status.readPtr      = NULL;
+    twi1_Status.writeLength  = 0;
+    twi1_Status.readLength   = 0;
+    twi1_Status.switchToRead = false;
+    twi1_Status.errorState   = I2C_ERROR_NONE;
+    twi1_Status.state        = I2C_STATE_IDLE;
+}
+
+// 内部関数: 転送を開始できなかった場合の後始末。
+//
+// TWI1_Write/Read/WriteRead が false を返すのは TWI1_IsBusy() が真のときだけで、
+// この経路は wait_for_completion() を通らない。従来はそこにしか復帰処理が無かった
+// ため、一度固着すると以降すべての転送開始が失敗し続けていた。
+static bool i2c_start_failed(void)
+{
+    i2c_recover_bus();
+    return false;
 }
 
 // 内部関数: 転送完了を待ち、エラー状態を確認する
@@ -46,7 +78,7 @@ bool I2C_IsConnected(uint8_t address)
 
     // 長さ0で書き込みを試みる (アドレス送信 -> ACKチェック -> Stop)
     // Melodyのバージョンによっては、長さ0だと何もせずtrueを返す場合があるため要確認
-    if (!TWI1_Write(address, &dummy, 0)) return false;
+    if (!TWI1_Write(address, &dummy, 0)) return i2c_start_failed();
 
     return wait_for_completion();
 }
@@ -54,7 +86,7 @@ bool I2C_IsConnected(uint8_t address)
 bool I2C_Write(uint8_t address, const uint8_t *data, size_t len)
 {
     // 転送開始要求
-    if (!TWI1_Write(address, (uint8_t *)data, len)) return false; // 他の転送が進行中
+    if (!TWI1_Write(address, (uint8_t *)data, len)) return i2c_start_failed(); // 他の転送が進行中
 
     // 完了待ち
     return wait_for_completion();
@@ -65,7 +97,7 @@ bool I2C_Read(uint8_t address, uint8_t *buffer, size_t len)
     if (len == 0) return true;
 
     // 転送開始要求
-    if (!TWI1_Read(address, buffer, len)) return false;
+    if (!TWI1_Read(address, buffer, len)) return i2c_start_failed();
 
     // 完了待ち
     return wait_for_completion();
@@ -74,7 +106,7 @@ bool I2C_Read(uint8_t address, uint8_t *buffer, size_t len)
 bool I2C_WriteRead(uint8_t address, const uint8_t *writeData, size_t writeLen, uint8_t *readBuffer, size_t readLen)
 {
     // MelodyのWriteRead機能を使用
-    if (!TWI1_WriteRead(address, (uint8_t *)writeData, writeLen, readBuffer, readLen)) return false;
+    if (!TWI1_WriteRead(address, (uint8_t *)writeData, writeLen, readBuffer, readLen)) return i2c_start_failed();
 
     // 完了待ち
     return wait_for_completion();
