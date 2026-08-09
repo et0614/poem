@@ -7,6 +7,13 @@
 slave_node_t NM_Nodes[MAX_NODES];
 uint8_t      NM_NodeCount = 0;
 
+// スキャンを実行した累計 (診断用)。
+//
+// スキャンは 0x08~0x77 を総当たりするので、バスが不調な最中に走ると 1 回で
+// 100 回前後の失敗を積む。ポーリング由来の失敗 (1 周期あたり子機の数だけ) とは
+// 桁が違うため、この値が同時に増えたかどうかを見ないと fail の急増を誤読する。
+uint16_t     NM_ScanCount = 0;
+
 void NM_init(void)
 {
     NM_NodeCount = 0;
@@ -129,6 +136,8 @@ static void appendDummyNodes(void)
 
 uint8_t NM_scan(void)
 {
+    if (NM_ScanCount < 0xFFFF) NM_ScanCount++;
+
     NM_NodeCount = 0;
     memset(NM_Nodes, 0, sizeof(NM_Nodes));
 
@@ -166,6 +175,8 @@ uint8_t NM_scan(void)
 // 旧個体のままになる。個体の入れ替えを反映するには SCAN ボタンで全走査すること。
 uint8_t NM_scanNewNodes(void)
 {
+    if (NM_ScanCount < 0xFFFF) NM_ScanCount++;
+
     uint8_t added = 0;
 
     for (uint8_t addr = I2C_ADDR_SCAN_FIRST;

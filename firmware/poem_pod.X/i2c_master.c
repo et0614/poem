@@ -19,17 +19,38 @@
 #define I2C_WAIT_MAX_ITER  10000UL
 
 // 診断カウンタ。publish して外から観測する (I2C_GetDiag)
-static uint16_t i2c_fail_count    = 0;   // 転送失敗の累計
+//
+// 失敗は原因別に数える。合計 1 本しか無かったときは、増分を見ても
+//   ・バスが数秒止まる外乱 (タイムアウトの連続。約 10 回/秒 でしか増えない)
+//   ・転送を開始できずに即失敗し続ける状態 (待たないので一気に増える)
+// の区別がつかなかった。実測で 1 秒に 100 以上増えた事例があり、そのときも
+// どちらなのか判断できず、解釈を三度変える羽目になった。
+static uint16_t i2c_fail_count    = 0;   // 失敗の合計 = timeout + start
+static uint16_t i2c_fail_timeout  = 0;   // 内訳: 完了待ちタイムアウト
+static uint16_t i2c_fail_start    = 0;   // 内訳: 転送を開始できなかった
 static uint16_t i2c_recover_count = 0;   // バス強制復帰を実行した累計
 
-static void i2c_count_fail(void)
+// 直近の失敗時の MSTATUS。復帰処理がレジスタを初期化する前に控える。
+static uint8_t  i2c_fail_mstatus  = 0;
+
+// 内訳と合計を同時に進める。合計を残してあるのは、過去に取得した長期データと
+// 比較できるようにするため。
+static void i2c_count_fail(uint16_t *breakdown)
 {
+    if (*breakdown     < 0xFFFF) (*breakdown)++;
     if (i2c_fail_count < 0xFFFF) i2c_fail_count++;
 }
 
 // 内部関数: バスをアイドル状態に強制復帰させる
 static void i2c_recover_bus(void)
 {
+    // 復帰する前に MSTATUS を控える。この 1 行より後では「何が起きていたか」を
+    // 示す情報がどこにも残らない。TWI1_Deinitialize()/Initialize() は BUSSTATE を
+    // IDLE に戻し、BUSERR / ARBLOST / CLKHOLD / RXACK をすべて落としてしまうため、
+    // publish 時に読める MSTATUS は「復帰直後の綺麗な値」でしかなく、診断に使えない。
+    // 実機で何度観測しても mst=1 か 17 しか出てこなかったのはこのせいだった。
+    i2c_fail_mstatus = TWI1.MSTATUS;
+
     // TWI を再初期化。ハング状態のバス状態機械を IDLE に戻す。
     TWI1_Deinitialize();
     TWI1_Initialize();
@@ -70,17 +91,22 @@ static void i2c_recover_bus(void)
 // までデータが止まっていた。ここで明示的に復帰させる。
 static bool i2c_start_failed(void)
 {
-    i2c_count_fail();
+    i2c_count_fail(&i2c_fail_start);
     i2c_recover_bus();
     return false;
 }
 
-// I2C の診断情報を取得する。不要な項目には NULL を渡してよい。
-void I2C_GetDiag(uint8_t *mstatus, uint16_t *failCount, uint16_t *recoverCount)
+// I2C の診断情報を取得する。
+void I2C_GetDiag(i2c_diag_t *diag)
 {
-    if (mstatus      != NULL) *mstatus      = TWI1.MSTATUS;
-    if (failCount    != NULL) *failCount    = i2c_fail_count;
-    if (recoverCount != NULL) *recoverCount = i2c_recover_count;
+    if (diag == NULL) return;
+
+    diag->mstatus      = TWI1.MSTATUS;
+    diag->failMstatus  = i2c_fail_mstatus;
+    diag->failCount    = i2c_fail_count;
+    diag->failTimeout  = i2c_fail_timeout;
+    diag->failStart    = i2c_fail_start;
+    diag->recoverCount = i2c_recover_count;
 }
 
 // 内部関数: 転送完了を待ち、エラー状態を確認する
@@ -95,7 +121,7 @@ static bool wait_for_completion(void)
         if (++iter > I2C_WAIT_MAX_ITER)
         {
             // ハング疑い。バスを強制復帰して失敗を返す
-            i2c_count_fail();
+            i2c_count_fail(&i2c_fail_timeout);
             i2c_recover_bus();
             return false;
         }

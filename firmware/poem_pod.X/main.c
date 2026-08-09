@@ -219,17 +219,29 @@ static void publishConfigOne(slave_node_t* node)
 // サーバはトピックを判定する前に受信メッセージを無条件でログ出力し、nodes/config/ と
 // nodes/data/ 以外は無視する。したがってサーバを改修しなくてもこのトピックはログに残る。
 // バス固着が再発したときに MSTATUS と復帰回数を確認するための診断用。
+//
+// フィールドの意味:
+//   mst  現在の MSTATUS       fail 失敗の合計 (= to + sf)   rcv  復帰の実行回数
+//   to   タイムアウトでの失敗  sf   転送開始できずの失敗
+//   fm   失敗時の MSTATUS (復帰処理で消される前の値。これだけが原因を示す)
+//   scn  スキャンの実行回数 (総当たりなので、走ると fail が一気に 100 前後増える)
 static void publishDiag(void)
 {
-    uint8_t  mstatus;
-    uint16_t failCount, recoverCount;
-    I2C_GetDiag(&mstatus, &failCount, &recoverCount);
+    i2c_diag_t d;
+    I2C_GetDiag(&d);
 
-    char payload[64];
+    // 最悪値 (すべて 5 桁) でも 85 文字 + NUL。余裕をみて 128。
+    char payload[128];
     int len = snprintf(payload, sizeof(payload),
-                       "{\"mst\":%u,\"fail\":%u,\"rcv\":%u}",
-                       (unsigned)mstatus, (unsigned)failCount, (unsigned)recoverCount);
-    if (len <= 0) return;
+                       "{\"mst\":%u,\"fail\":%u,\"rcv\":%u,"
+                       "\"to\":%u,\"sf\":%u,\"fm\":%u,\"scn\":%u}",
+                       (unsigned)d.mstatus, (unsigned)d.failCount, (unsigned)d.recoverCount,
+                       (unsigned)d.failTimeout, (unsigned)d.failStart,
+                       (unsigned)d.failMstatus, (unsigned)NM_ScanCount);
+
+    // 切り詰められた JSON を publish すると、サーバ側で壊れた行になる。
+    // 過去に NaN で JSON を壊した経験があるので、ここでも落としておく。
+    if (len <= 0 || (size_t)len >= sizeof(payload)) return;
 
     MA_publish("nodes/diag/pod", (const uint8_t*)payload, (uint16_t)len);
     wdt_reset();
