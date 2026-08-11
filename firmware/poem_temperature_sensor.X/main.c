@@ -133,6 +133,7 @@ int main(void)
     sei();
 
     uint8_t rst_hold_count = 0;
+    bool    clkhold_held   = false;
 
     while (1)
     {
@@ -147,6 +148,33 @@ int main(void)
         if (g_one_sec_tick)
         {
             g_one_sec_tick = false;
+
+            // TWI0 クライアントの固着検出。
+            //
+            // SCL を離す手段は SCMD だけだが、生成ドライバにはそれを出さずに ISR を
+            // 抜ける経路が残っている (エラー処理と、イベント判定末尾の
+            // "No action required")。そこに入ると SCL を解放せずに停止し、I2C は
+            // 2 本を共有しているのでバス上の全ノードが読めなくなる。親機側からは
+            // 解けない (2026-08-10 に実測。SDA/SCL とも Low、ホストを 32 回初期化
+            // しても復帰せず)。
+            //
+            // 正常な電文は 3.5 ミリ秒で終わる。1 秒周期を 2 回またいで CLKHOLD が
+            // 立ちっぱなしなら異常と断定してよいので、強制的に取引を終わらせる。
+            if (TWI0.SSTATUS & TWI_CLKHOLD_bm) {
+                if (clkhold_held) {
+                    // 解放していなかったのが自分だったことを親機に知らせる (0x2A)。
+                    // バス上の全員が同じ症状に見えるので、これ以外に犯人を特定
+                    // する手段がない。
+                    if (SharedMemory.reg.hold_count < 0xFF) SharedMemory.reg.hold_count++;
+                    TWI0.SSTATUS = (TWI_COLL_bm | TWI_BUSERR_bm | TWI_APIF_bm | TWI_DIF_bm);
+                    TWI0.SCTRLB  = TWI_ACKACT_NACK_gc | TWI_SCMD_COMPTRANS_gc;
+                    clkhold_held = false;
+                } else {
+                    clkhold_held = true;
+                }
+            } else {
+                clkhold_held = false;
+            }
 
             // Reset スイッチ長押し判定 (1sec 単位、RESET_HOLD_SECONDS で発動)
             if (IO_RESET_GetValue() == 0) {

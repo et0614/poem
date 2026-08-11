@@ -43,6 +43,8 @@ typedef struct {
     uint16_t failTimeout;   // 内訳: 完了待ちタイムアウト。1 回あたり約 100 ミリ秒かかる
     uint16_t failStart;     // 内訳: 転送を開始できなかった。待たないので一気に増える
     uint16_t recoverCount;  // バス強制復帰を実行した累計
+    uint16_t sdaLowCount;   // 復帰に入った時点で SDA が Low に張り付いていた回数
+    uint16_t sclLowCount;   // 同じく SCL。SDA と分けるのは原因が違うため
 } i2c_diag_t;
 
 // I2C の診断情報を取得する。

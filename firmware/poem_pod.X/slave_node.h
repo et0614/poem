@@ -40,7 +40,13 @@ extern "C" {
 #define REG_NAME                0x18    // char[16] R/W: 装置ラベル (NUL 終端、EEPROM 永続)
 #define REG_STATUS1             0x28    // uint8  R    : 異常フラグ bitmask
 #define REG_STATUS2             0x29    // uint8  R/W  : 0=未了, 1=更新完了
-                                         // 0x2A-0x2B    : reserved (float 整列用)
+// 0x2A-0x2B は元は予約 (float 整列用) だった 2 バイト。POLL BLOCK の内側にあり毎周期
+// 読んで捨てていたので、通信を増やさずに子機の自己診断を運ぶために割り当てた。
+// I2C は 2 本を全員で共有しており、1 台が SCL を解放しないとバス上の全ノードが止まる。
+// 症状は全台同じに見えるため、どの個体が原因かは子機自身に数えさせるしかない。
+// 未対応の子機は 0 のままなので、混在しても誤検出しない。
+#define REG_HOLD_COUNT          0x2A    // uint8  R    : SCL 固着を自力解除した回数
+#define REG_ERR_COUNT           0x2B    // uint8  R    : COLL/BUSERR を検出した回数
 #define REG_VALUE               0x2C    // float[8] R  : 計測値 (LE)
 #define REG_EXTENSION           0x4C    // 各子機固有 (親機は触らない)
 
@@ -73,6 +79,8 @@ typedef struct {
     uint16_t unit_type[NODE_MAX_VALUES];        // BACnet Engineering Units
     uint8_t  status1;                           // 直近に読んだ Status1 (異常 bitmask)
     uint8_t  status2;                           // 直近に読んだ Status2 (0/1)
+    uint8_t  hold_count;                        // 直近に読んだ 0x2A (子機の固着自力解除回数)
+    uint8_t  err_count;                         // 直近に読んだ 0x2B (子機の COLL/BUSERR 回数)
     uint8_t  seq;                               // 親機管理シーケンス番号 (0~254、255=未計測)
     float    value[NODE_MAX_VALUES];            // 直近の計測値
     char     name[NODE_NAME_LEN];               // Web 設定画面の表示用ラベル (5文字 + NUL)
