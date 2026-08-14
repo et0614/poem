@@ -49,8 +49,9 @@ volatile bool g_one_sec_tick = false;
 
 // <editor-fold defaultstate="collapsed" desc="計測処理">
 
-// SHT4x から温湿度を読み取り、補正を適用して value[] に書き込む
-static bool measureAndPublish(void)
+// SHT4x から温湿度を読み取り、補正を適用して返す。
+// SharedMemory への公開は行わない (公開タイミングは main loop が制御する)
+static bool measure(float *out_t, float *out_h)
 {
     float raw_t = 0.0f;
     float raw_h = 0.0f;
@@ -68,15 +69,8 @@ static bool measureAndPublish(void)
         hb = SharedMemory.reg.humi_coef_b;
     }
 
-    float corr_t = ta * raw_t + tb;
-    float corr_h = ha * raw_h + hb;
-
-    // 計測値の書き込み + 更新フラグ
-    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-        SharedMemory.reg.value[VAL_IDX_TEMPERATURE] = corr_t;
-        SharedMemory.reg.value[VAL_IDX_HUMIDITY]    = corr_h;
-        SharedMemory.reg.status2 = 1;
-    }
+    *out_t = ta * raw_t + tb;
+    *out_h = ha * raw_h + hb;
     return true;
 }
 
@@ -202,7 +196,23 @@ int main(void)
             }
 
             // SHT4x 計測
-            if (measureAndPublish()) {
+            float corr_t, corr_h;
+            if (measure(&corr_t, &corr_h)) {
+                // 親機が POLL ブロック 0x28-0x4B の 36 バイトを読んでいる最中に
+                // value[] の float を書き換えると、前半旧値・後半新値の壊れた float が
+                // valid として渡る。通信中は公開せず、次の計測周期に回す。計測そのものは
+                // 上で済ませてあるので途切れない。
+                //
+                // ATOMIC_BLOCK だけでは足りない。保証されるのは「1 回の書き込みが 1 回の
+                // 割り込みに割られない」ことだけで、守りたい単位は 36 バイトの転送全体、
+                // つまり何十回もの割り込みにまたがる範囲だから。
+                if (!I2C_Is_Busy) {
+                    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+                        SharedMemory.reg.value[VAL_IDX_TEMPERATURE] = corr_t;
+                        SharedMemory.reg.value[VAL_IDX_HUMIDITY]    = corr_h;
+                        SharedMemory.reg.status2 = 1;
+                    }
+                }
                 ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
                     SharedMemory.reg.status1 = 0x00;
                 }
