@@ -35,21 +35,45 @@
 // SHT4x の I2C アドレス (基板実装は SHT40-AD1B = 0x44)
 #define SHT4X_TYPE          SHT4_AD
 
+// ===== 計測周期 ============================================================
+// 125 ms 周期で計測し、直近 8 個の移動平均を親機に返す。
+//
+// 125 ms × 8 = 1.000 秒 で、親機のポーリング周期とちょうど一致する。平均の窓が
+// 隙間なく連続するので、どの計測もきっかり 1 回だけ親機に届く。100 ms だと窓が
+// 0.8 秒になり、1 秒ごとに 10 個進むうち 2 個が誰にも読まれずに捨てられる。
+// RTC も 32768/8 = 4096 で割り切れる。
+#define TICKS_PER_SEC       (8)
+#define RTC_PERIOD_TICK     (4095)  // 32768 / TICKS_PER_SEC - 1
+#define AVG_N               (8)
+
 // Reset スイッチ長押しで EEPROM 初期化 [秒]
 #define RESET_HOLD_SECONDS  (3)
+#define RESET_HOLD_TICKS    (RESET_HOLD_SECONDS * TICKS_PER_SEC)
+
+// CLKHOLD が連続で立ちっぱなしなら異常とみなす閾値 (= 1 秒)
+#define CLKHOLD_STUCK_TICKS (TICKS_PER_SEC)
 
 // </editor-fold>
 
 // <editor-fold defaultstate="collapsed" desc="変数">
 
-// 1秒ごとに立つ計測要求フラグ (RTC OVF で true に)
-volatile bool g_one_sec_tick = false;
+// 計測周期ごとに立つ計測要求フラグ (RTC OVF で true に)
+volatile bool g_meas_tick = false;
+
+// 移動平均のリングバッファ (SHT4x の生値)。
+// 補正は corrected = a*raw + b の一次式なので、平均してから補正しても
+// 補正してから平均しても同じ。float 演算が減る前者にする。
+static float   s_buf_t[AVG_N];
+static float   s_buf_h[AVG_N];
+static uint8_t s_buf_idx    = 0;
+static uint8_t s_buf_filled = 0;
 
 // </editor-fold>
 
 // <editor-fold defaultstate="collapsed" desc="計測処理">
 
-// SHT4x から温湿度を読み取り、補正を適用して返す。
+// SHT4x から温湿度を読み取り、移動平均に積んで、補正を適用して返す。
+// 窓が埋まるまで (起動後 1 秒) は平均が出せないので false を返す。
 // SharedMemory への公開は行わない (公開タイミングは main loop が制御する)
 static bool measure(float *out_t, float *out_h)
 {
@@ -58,6 +82,24 @@ static bool measure(float *out_t, float *out_h)
 
     if (!SHT4x_ReadValue(&raw_t, &raw_h, SHT4X_TYPE)) {
         return false;
+    }
+
+    s_buf_t[s_buf_idx] = raw_t;
+    s_buf_h[s_buf_idx] = raw_h;
+    s_buf_idx = (uint8_t)((s_buf_idx + 1) % AVG_N);
+    if (s_buf_filled < AVG_N) {
+        s_buf_filled++;
+        return false;   // まだ 8 個そろっていない
+    }
+
+    // 毎回 8 個を足し直す。「古い値を引いて新しい値を足す」差分更新のほうが速いが、
+    // float の丸め誤差が何時間も積もり続ける。125 ms に対して 8 回の加算は十分
+    // 安いので、素直に足し直す。
+    float sum_t = 0.0f;
+    float sum_h = 0.0f;
+    for (uint8_t i = 0; i < AVG_N; i++) {
+        sum_t += s_buf_t[i];
+        sum_h += s_buf_h[i];
     }
 
     // 補正係数を atomic に取り出し
@@ -69,8 +111,8 @@ static bool measure(float *out_t, float *out_h)
         hb = SharedMemory.reg.humi_coef_b;
     }
 
-    *out_t = ta * raw_t + tb;
-    *out_h = ha * raw_h + hb;
+    *out_t = ta * (sum_t / AVG_N) + tb;
+    *out_h = ha * (sum_h / AVG_N) + hb;
     return true;
 }
 
@@ -78,10 +120,10 @@ static bool measure(float *out_t, float *out_h)
 
 // <editor-fold defaultstate="collapsed" desc="main">
 
-// 1sec タイマ用コールバック (RTC OVF, 32768/32768 = 1.0s)
-static void secHandler(void)
+// 計測タイマ用コールバック (RTC OVF, 4096/32768 = 125 ms)
+static void tickHandler(void)
 {
-    g_one_sec_tick = true;
+    g_meas_tick = true;
 }
 
 int main(void)
@@ -109,7 +151,7 @@ int main(void)
     SharedMemory.reg.data_count    = 2;
     SharedMemory.reg.unit_type[0]  = UNIT_DEGREES_CELSIUS;
     SharedMemory.reg.unit_type[1]  = UNIT_PERCENT_RELATIVE_HUMID;
-    SharedMemory.reg.status1       = 0;
+    SharedMemory.reg.status1       = STATUS1_ALL_STALE;  // 平均が埋まるまで stale
     SharedMemory.reg.status2       = 0;
     for (uint8_t i = 0; i < 8; i++) SharedMemory.reg.value[i] = 0.0f;
 
@@ -118,8 +160,11 @@ int main(void)
         SharedMemory.reg.status1 = STATUS1_ALL_STALE;
     }
 
-    // RTC OVF (1sec) コールバック登録
-    RTC_SetOVFIsrCallback(secHandler);
+    // RTC を 1 秒周期から 125 ms 周期へ。PER を縮める前に CNT を戻さないと、
+    // CNT > PER のまま 0xFFFF まで回ってしまい、初回だけ 2 秒待つことになる。
+    RTC_WriteCounter(0);
+    RTC_WritePeriod(RTC_PERIOD_TICK);
+    RTC_SetOVFIsrCallback(tickHandler);
 
     // I2C スレーブ初期化
     I2C_Slave_Init();
@@ -128,7 +173,7 @@ int main(void)
     sei();
 
     uint8_t rst_hold_count = 0;
-    bool    clkhold_held   = false;
+    uint8_t clkhold_ticks  = 0;
 
     while (1)
     {
@@ -153,10 +198,10 @@ int main(void)
             EM_updateEEPROM();
         }
 
-        // 1秒タイマー: SHT4x 計測 + Reset スイッチ判定
-        if (g_one_sec_tick)
+        // 計測タイマー (125 ms): SHT4x 計測 + Reset スイッチ判定
+        if (g_meas_tick)
         {
-            g_one_sec_tick = false;
+            g_meas_tick = false;
 
             // TWI0 クライアントの固着検出。
             //
@@ -167,27 +212,25 @@ int main(void)
             // 解けない (2026-08-10 に実測。SDA/SCL とも Low、ホストを 32 回初期化
             // しても復帰せず)。
             //
-            // 正常な電文は 3.5 ミリ秒で終わる。1 秒周期を 2 回またいで CLKHOLD が
+            // 正常な電文は 3.5 ミリ秒で終わる。125 ms 刻みで 1 秒ぶん CLKHOLD が
             // 立ちっぱなしなら異常と断定してよいので、強制的に取引を終わらせる。
             if (TWI0.SSTATUS & TWI_CLKHOLD_bm) {
-                if (clkhold_held) {
+                if (++clkhold_ticks >= CLKHOLD_STUCK_TICKS) {
                     // 解放していなかったのが自分だったことを親機に知らせる (0x2A)。
                     // バス上の全員が同じ症状に見えるので、これ以外に犯人を特定
                     // する手段がない。
                     if (SharedMemory.reg.hold_count < 0xFF) SharedMemory.reg.hold_count++;
                     TWI0.SSTATUS = (TWI_COLL_bm | TWI_BUSERR_bm | TWI_APIF_bm | TWI_DIF_bm);
                     TWI0.SCTRLB  = TWI_ACKACT_NACK_gc | TWI_SCMD_COMPTRANS_gc;
-                    clkhold_held = false;
-                } else {
-                    clkhold_held = true;
+                    clkhold_ticks = 0;
                 }
             } else {
-                clkhold_held = false;
+                clkhold_ticks = 0;
             }
 
-            // Reset スイッチ長押し判定 (1sec 単位、RESET_HOLD_SECONDS で発動)
+            // Reset スイッチ長押し判定 (RESET_HOLD_SECONDS 秒で発動)
             if (IO_RESET_GetValue() == 0) {
-                if (++rst_hold_count >= RESET_HOLD_SECONDS) {
+                if (++rst_hold_count >= RESET_HOLD_TICKS) {
                     EM_resetEEPROM();
                     rst_hold_count = 0;
                 }
