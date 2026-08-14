@@ -212,6 +212,10 @@ bool NM_pollOne(slave_node_t* node)
     // 0x19: Status2
     node->status2 = buf[REG_STATUS2 - POLL_BLOCK_OFFSET];
 
+    // 0x2A/0x2B: 子機の自己診断カウンタ。未対応の子機は 0 のまま。
+    node->hold_count = buf[REG_HOLD_COUNT - POLL_BLOCK_OFFSET];
+    node->err_count  = buf[REG_ERR_COUNT  - POLL_BLOCK_OFFSET];
+
     // 0x1C~0x3B: float[8] LE — Status2==1 (子機が新値を準備済み) のときだけ取り込む。
     // それ以外は前回値を保持し、新旧は seq (=sq) で表現する。
     // ※ slave 側は ATOMIC_BLOCK で書き込んでいても、こちらの read は 1 バイトずつ

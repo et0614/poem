@@ -3,6 +3,8 @@
 #include "mcc_generated_files/i2c_host/i2c_host_event_types.h"  // twi1_Status
 
 #include <avr/io.h>     // TWI1.MSTATUS の参照 (診断用)
+#include "mcc_generated_files/system/clock.h"   // F_CPU (_delay_us が要求する)
+#include <util/delay.h>
 
 // I2C バス完了待ちの上限。TWI1_IsBusy/Tasks を繰り返し回すループの反復回数で
 // 表現する。F_CPU = 24 MHz、1 反復あたり 100〜200 cycle 程度として、この値で
@@ -33,6 +35,70 @@ static uint16_t i2c_recover_count = 0;   // バス強制復帰を実行した累
 // 直近の失敗時の MSTATUS。復帰処理がレジスタを初期化する前に控える。
 static uint8_t  i2c_fail_mstatus  = 0;
 
+// 復帰処理に入った時点で SDA / SCL が Low に張り付いていた回数。
+//
+// これが増えるなら「子機がSDA/SCL を Low に駆動したまま解放していない」が実測で確定する。MSTATUS には
+// この情報が出ない (ホスト側の BUSERR/ARBLOST/CLKHOLD はどれも立たない) ので、
+// ピンを直接読む以外に確かめる方法がない。
+//
+// 2 本を分けて数えるのは、解放されていない線で原因が変わるため。
+//   SDA が Low  → 子機がバイト送信の途中で止まっている (データを吐かせれば解ける)
+//   SCL が Low  → 子機がクロックを伸ばしたまま止まっている (外から解く手段がない)
+static uint16_t i2c_sda_low_count = 0;
+static uint16_t i2c_scl_low_count = 0;
+
+// TWI1 の割り当てピン (AVR128DB32 既定): PF2 = SDA, PF3 = SCL
+#define I2C_SDA_bm  PIN2_bm
+#define I2C_SCL_bm  PIN3_bm
+
+// 内部関数: バスを物理的に解放させる (I2C の標準手順)
+//
+// 生成ドライバの Deinitialize/Initialize はホスト側のレジスタしか触らないため、
+// 子機が SDA を解放せずに停止している場合は何度やっても解けない。実測でも 43 回
+// 繰り返して 4 秒間直らなかった。
+//
+// 子機は「クロックを送ってもらう」ことと「STOP を受け取ること」でしか状態機械を
+// 進められない。そこで TWI を切り離し、SCL を GPIO として叩いて残りのビットを
+// 吐き出させ、最後に手で STOP を作る。
+//
+// クライアント側の生成ドライバ (twi0.c) は COLL/BUSERR を自力でクリアせず、
+// これらが落ちるのは STOP 受信時の SSTATUS 書き戻しだけである。つまり STOP を
+// 与えることが、子機をエラー状態から出す唯一の手段になっている。
+static void i2c_bus_clear(void)
+{
+    // オープンドレインを手で再現する。OUT は 0 に固定し DIR だけを操作して、
+    // Low = 出力 / High = 入力 (プルアップに任せる) とする。High を driving すると
+    // 子機がクロックを伸ばしている最中に電流を流し合うことになる。
+    PORTF.OUTCLR = I2C_SDA_bm | I2C_SCL_bm;
+    PORTF.DIRCLR = I2C_SDA_bm | I2C_SCL_bm;
+    _delay_us(5);
+
+    uint8_t pins = PORTF.IN;
+    if (!(pins & I2C_SDA_bm)) { if (i2c_sda_low_count < 0xFFFF) i2c_sda_low_count++; }
+    if (!(pins & I2C_SCL_bm)) { if (i2c_scl_low_count < 0xFFFF) i2c_scl_low_count++; }
+
+    // 最大 9 発。1 バイト + ACK ぶんに相当する。回数固定なのでここでは止まらない。
+    for (uint8_t i = 0; i < 9; i++)
+    {
+        if (PORTF.IN & I2C_SDA_bm) break;   // 解放された
+        PORTF.DIRSET = I2C_SCL_bm;          // SCL Low
+        _delay_us(5);
+        PORTF.DIRCLR = I2C_SCL_bm;          // SCL High (解放)
+        _delay_us(5);
+    }
+
+    // STOP を作る。SDA を下げるのは SCL が Low のあいだに行う。SCL が High の
+    // ときに下げると START になってしまう。
+    PORTF.DIRSET = I2C_SCL_bm;              // SCL Low
+    _delay_us(5);
+    PORTF.DIRSET = I2C_SDA_bm;              // SDA Low
+    _delay_us(5);
+    PORTF.DIRCLR = I2C_SCL_bm;              // SCL High
+    _delay_us(5);
+    PORTF.DIRCLR = I2C_SDA_bm;              // SDA High = STOP
+    _delay_us(5);
+}
+
 // 内訳と合計を同時に進める。合計を残してあるのは、過去に取得した長期データと
 // 比較できるようにするため。
 static void i2c_count_fail(uint16_t *breakdown)
@@ -52,7 +118,9 @@ static void i2c_recover_bus(void)
     i2c_fail_mstatus = TWI1.MSTATUS;
 
     // TWI を再初期化。ハング状態のバス状態機械を IDLE に戻す。
+    // 切り離してからバスを物理的に解放させ、そのうえで初期化する。
     TWI1_Deinitialize();
+    i2c_bus_clear();
     TWI1_Initialize();
 
     // TWI1_Initialize()/Deinitialize() はレジスタしか触らず、ドライバ側の状態
@@ -107,6 +175,8 @@ void I2C_GetDiag(i2c_diag_t *diag)
     diag->failTimeout  = i2c_fail_timeout;
     diag->failStart    = i2c_fail_start;
     diag->recoverCount = i2c_recover_count;
+    diag->sdaLowCount  = i2c_sda_low_count;
+    diag->sclLowCount  = i2c_scl_low_count;
 }
 
 // 内部関数: 転送完了を待ち、エラー状態を確認する
@@ -126,6 +196,16 @@ static bool wait_for_completion(void)
             return false;
         }
     }
+
+    // ここには転送後の待ち (STOP の完了待ち) を入れていた時期がある。
+    //
+    // 生成ドライバの I2C_EVENT_STOP() は STOP を「命令」した直後に TWI1_Close() を
+    // 呼び、STOP が物理的に終わる前に TWI1_IsBusy() が false を返す。次の START が
+    // バスの整わないうちに出るのではないか、という筋を疑ったもの。
+    //
+    // 50us で 2 件/16 分、1 ミリ秒に上げても 8 件/36 分 = 13.2 回/時 で、待ち無しの
+    // 12.7 回/時 と変わらなかった。待ち時間を 20 倍にして無変化なら「待ちが足りな
+    // かっただけ」とは言えないので、この筋は否定された。実験のための待ちなので外す。
 
     // エラー状態を確認
     i2c_host_error_t error = TWI1_ErrorGet();

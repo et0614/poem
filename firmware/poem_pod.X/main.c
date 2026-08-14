@@ -230,14 +230,16 @@ static void publishDiag(void)
     i2c_diag_t d;
     I2C_GetDiag(&d);
 
-    // 最悪値 (すべて 5 桁) でも 85 文字 + NUL。余裕をみて 128。
+    // 最悪値 (すべて 5 桁) でも 111 文字 + NUL。余裕をみて 128。
     char payload[128];
     int len = snprintf(payload, sizeof(payload),
                        "{\"mst\":%u,\"fail\":%u,\"rcv\":%u,"
-                       "\"to\":%u,\"sf\":%u,\"fm\":%u,\"scn\":%u}",
+                       "\"to\":%u,\"sf\":%u,\"fm\":%u,\"scn\":%u,"
+                       "\"sdl\":%u,\"scl\":%u}",
                        (unsigned)d.mstatus, (unsigned)d.failCount, (unsigned)d.recoverCount,
                        (unsigned)d.failTimeout, (unsigned)d.failStart,
-                       (unsigned)d.failMstatus, (unsigned)NM_ScanCount);
+                       (unsigned)d.failMstatus, (unsigned)NM_ScanCount,
+                       (unsigned)d.sdaLowCount, (unsigned)d.sclLowCount);
 
     // 切り詰められた JSON を publish すると、サーバ側で壊れた行になる。
     // 過去に NaN で JSON を壊した経験があるので、ここでも落としておく。
@@ -266,10 +268,38 @@ static void handleScanRequest(void)
 
 // 1 ノードを poll → JSON 生成 → publish。Status2==1 なら seq +1 して 0 を書き戻す。
 // I²C 失敗時は status1 を STATUS1_ALL_STALE (0xFF) で上書きし、value は前回値のまま publish する。
+// 子機の自己診断カウンタ (0x2A/0x2B) を publish する。
+//
+// I2C は 2 本を全員で共有しているので、1 台が SCL を解放しないとバス上の全ノードが止まる。
+// 症状は全台同じに見えて親機からは区別できないため、子機自身に数えさせてここで運ぶ。
+// 値が変わったときだけ出すので、平常時はまったく流れない。
+//
+// トピックはサーバにとって未知なのでログに出るだけで、判定処理には影響しない。
+static void publishNodeDiag(const slave_node_t* node)
+{
+    char    topic[24];
+    uint8_t payload[64];
+
+    int tlen = snprintf(topic, sizeof(topic), "nodes/diag/%lu", (unsigned long)node->device_id);
+    if (tlen <= 0 || (size_t)tlen >= sizeof(topic)) return;
+
+    int len = snprintf((char*)payload, sizeof(payload),
+                       "{\"id\":%lu,\"hld\":%u,\"err\":%u}",
+                       (unsigned long)node->device_id,
+                       (unsigned)node->hold_count, (unsigned)node->err_count);
+    if (len <= 0 || (size_t)len >= sizeof(payload)) return;
+
+    MA_publish(topic, payload, (uint16_t)len);
+}
+
 static void pollAndPublishOne(slave_node_t* node)
 {
     char    topic[24];
     uint8_t payload[256];
+
+    // 自己診断カウンタの増加を検出するため、読む前の値を控える。
+    uint8_t prev_hold = node->hold_count;
+    uint8_t prev_err  = node->err_count;
 
     if (NM_pollOne(node)) {
         // 通信成功: status1 は NM_pollOne が子機から読み出した値で上書き済み
@@ -278,6 +308,11 @@ static void pollAndPublishOne(slave_node_t* node)
         if (node->status2 == 1) {
             node->seq = (node->seq == SEQ_INITIAL) ? 0 : (uint8_t)((node->seq + 1) % 255);
             NM_clearStatus2(node);
+        }
+
+        // 自己診断カウンタが動いたら知らせる。平常時はまったく流れない。
+        if (node->hold_count != prev_hold || node->err_count != prev_err) {
+            publishNodeDiag(node);
         }
     } else {
         // 通信失敗: 全計測値が信頼できないことを示す。リストからは外さない (生存確認のため publish 継続)

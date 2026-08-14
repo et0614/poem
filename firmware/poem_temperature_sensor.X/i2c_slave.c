@@ -39,6 +39,16 @@ static bool isWritable(uint8_t addr)
     return false;
 }
 
+// 転送終了時の共通後始末。正常終了 (STOP) でも異常終了でも同じことをする。
+static void endTransfer(void)
+{
+    I2C_Is_Busy = false;
+    I2C_KeepAlive_Ticks = KEEP_ALIVE_DURATION;
+    I2C_Config_Update_Requested |= cnfg_update_flag;
+    cnfg_update_flag = false;
+    addr_changed_flag = false;
+}
+
 bool I2C_Slave_Callback(i2c_client_transfer_event_t event)
 {
     switch(event)
@@ -113,14 +123,26 @@ bool I2C_Slave_Callback(i2c_client_transfer_event_t event)
             }
             // 鍵をクリア
             SharedMemory.reg.addr_key = 0x00;
-            // フォールスルー
+            endTransfer();
+            break;
 
+        // 異常終了 ************************************
+        //
+        // 生成ドライバの TWI0_ErrorEventHandler() は COLL / BUSERR を検出しても、
+        // フラグをクリアせず SCTRLB に SCMD も書かずに戻る。クライアントが SCL を
+        // 離す手段は SCMD しかないため、この経路に入ると SCL を解放せずに停止する。
+        // I2C は 2 本を全員で共有しているので、1 台が解放しないとバス上の全ノードが
+        // 巻き添えになる。
+        //
+        // 2026-08-10、pod 側でピンを直接読んで確認した。外乱の最中は SDA / SCL とも
+        // Low に張り付いており、ホスト側を 32 回初期化しても、GPIO で SCL を叩いても
+        // 解けなかった (SCL が解放されないと、そもそもクロックが出せない)。
+        // 解放していない側が自分で解放するしかない。
         case I2C_CLIENT_TRANSFER_EVENT_ERROR:
-            I2C_Is_Busy = false;
-            I2C_KeepAlive_Ticks = KEEP_ALIVE_DURATION;
-            I2C_Config_Update_Requested |= cnfg_update_flag;
-            cnfg_update_flag = false;
-            addr_changed_flag = false;
+            if (SharedMemory.reg.err_count < 0xFF) SharedMemory.reg.err_count++;
+            TWI0.SSTATUS = (TWI_COLL_bm | TWI_BUSERR_bm);
+            TWI0.SCTRLB  = TWI_ACKACT_NACK_gc | TWI_SCMD_COMPTRANS_gc;
+            endTransfer();
             break;
 
         default:
