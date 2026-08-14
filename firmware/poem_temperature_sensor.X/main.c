@@ -26,6 +26,7 @@
 #include <util/atomic.h>
 #include <string.h>
 #include <avr/sleep.h>
+#include <avr/wdt.h>
 
 // </editor-fold>
 
@@ -137,6 +138,20 @@ int main(void)
 
     while (1)
     {
+        // WDT は SYSTEM_Initialize() 内で 4.1 秒周期に設定されている
+        // (mcc_generated_files/system/src/system.c の WDT_Initialize)。ヒューズは
+        // PERIOD_OFF_gc だがロックされていないので、この実行時の書き込みが有効になる。
+        //
+        // ところがこの firmware には wdt_reset() がどこにも無く、全個体が 4.1 秒ごとに
+        // 再起動していた。再起動のたびに I2C クライアントが「有効だが割り込みが
+        // 止まっていて応答できない」区間を通るため、そこに親機のポーリングが当たると
+        // SCL が解放されず、バス上の全ノードが巻き添えになる。
+        //
+        // データにも出ていた。1 秒ポーリングに対して sq がきっちり 4 回に 1 回止まり、
+        // 温湿度センサ 7 台とも重複率 25%。WDT を有効にしていない風速センサ 2 台は
+        // 0.0% で、設定の違いがそのまま分かれていた。
+        wdt_reset();
+
         // マスタからの拡張領域 (補正係数) 書き込みリクエスト
         if (I2C_Config_Update_Requested)
         {
