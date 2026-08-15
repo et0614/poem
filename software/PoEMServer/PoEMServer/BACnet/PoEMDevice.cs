@@ -1,4 +1,4 @@
-using System.IO.BACnet;
+﻿using System.IO.BACnet;
 using System.IO.BACnet.Storage;
 using BaCSharp;
 
@@ -30,7 +30,7 @@ namespace PoEMServer.BACnet
     ///   base+1   CharStringValue  DeviceID (FNV-1a 22bit、個体識別)
     ///   base+2   CharStringValue  Name (子機 EEPROM 由来)
     ///   base+3   AnalogInput      Status1 (生 bitmask)
-    ///   base+4   AnalogInput      Seq (シーケンス番号)
+    ///   base+4   AnalogInput      Seq (子機が数えた計測回数)
     ///   base+5   AnalogInput      DataCount
     ///   base+6   DateTimeValue    最終正常データ受信日時 (status1==0x00 のときのみ更新)
     ///   base+10..base+17  AnalogInput  value[0..7] (UNITS は config の u[i] から)
@@ -326,7 +326,7 @@ namespace PoEMServer.BACnet
             AddCharString  (b + 1u, $"{disp}_ID", $"DeviceID (FNV-1a 22bit) of {disp}", $"{child.DeviceId}");
             AddCharString  (b + 2u, $"{disp}_NAME", $"Configured label of {disp}", child.Name);
             AddAnalogInput (b + 3u, $"{disp}_ST",  $"Status1 bitmask of {disp}", 0, BACNET_UNITS_NO_UNITS);
-            AddAnalogInput (b + 4u, $"{disp}_SEQ", $"Sequence number of {disp}", 0, BACNET_UNITS_NO_UNITS);
+            AddAnalogInput (b + 4u, $"{disp}_SEQ", $"Measurement count of {disp}", 0, BACNET_UNITS_NO_UNITS);
             AddAnalogInput (b + 5u, $"{disp}_CNT", $"Active value count of {disp}", child.DataCount, BACNET_UNITS_NO_UNITS);
             // base+6: 全計測値が有効 (status1==0x00) なデータを最後に受信した日時。
             // base+0 が「生存信号」なのに対し、こちらは「値がいつまで信頼できたか」を示す。

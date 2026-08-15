@@ -33,6 +33,11 @@
 #define INTERRUPT_MSEC  (20)    // タイマ割り込み間隔 [msec]
 #define RESET_TIME      (3000)  // Reset 押し続け時間 [msec]
 
+// meas_count (0x2A) を進める間引き数。20ms × 10 = 200ms 周期 = 毎秒 +5。
+// 計測そのものは 20ms のままで、カウンタだけ間引く。20ms ごとに進めると毎秒 +50 で
+// 5.1 秒ごとに巻き戻り、親機の 1 秒ポーリングに対して粗すぎる。
+#define MEAS_COUNT_DIV  (10)
+
 // </editor-fold>
 
 // <editor-fold defaultstate="collapsed" desc="変数定義">
@@ -148,6 +153,10 @@ int main(void)
     SharedMemory.reg.unit_type[1]  = UNIT_VOLTS;
     SharedMemory.reg.status1       = 0;
     SharedMemory.reg.status2       = 0;
+    // meas_count は RAM 上の変数なので、再起動すると必ず 0 に戻る。親機はこの値が
+    // 1 秒あたり 5 進むかどうかを見て、黙って再起動していないかを判定する。
+    SharedMemory.reg.meas_count    = 0;
+    SharedMemory.reg.err_count     = 0;
     for (uint8_t i = 0; i < 8; i++) SharedMemory.reg.value[i] = 0.0f;
 
     // ===== 拡張領域の初期化 ===================================================
@@ -171,6 +180,7 @@ int main(void)
     sei();
 
     uint8_t prev_enabled = SharedMemory.reg.enable;
+    uint8_t meas_div     = 0;
     while (1)
     {
         // マスタからの設定変更リクエスト
@@ -207,6 +217,14 @@ int main(void)
         if (tick_count)
         {
             ATOMIC_BLOCK(ATOMIC_RESTORESTATE) { tick_count--; }
+
+            // MEAS_COUNT_DIV 回に 1 度 +1。255 の次は 0 に戻る (uint8 の自然な巻き戻り)。
+            // 予熱中や enable=0 でも進める。「MCU が生きて回っているか」だけを表す
+            // 信号にしたいので、計測の可否は status1 に任せる。
+            if (++meas_div >= MEAS_COUNT_DIV) {
+                meas_div = 0;
+                SharedMemory.reg.meas_count++;
+            }
 
             // I2C keepalive
             if (0 < I2C_KeepAlive_Ticks)

@@ -153,6 +153,10 @@ int main(void)
     SharedMemory.reg.unit_type[1]  = UNIT_PERCENT_RELATIVE_HUMID;
     SharedMemory.reg.status1       = STATUS1_ALL_STALE;  // 平均が埋まるまで stale
     SharedMemory.reg.status2       = 0;
+    // meas_count は RAM 上の変数なので、再起動すると必ず 0 に戻る。親機はこの値が
+    // 1 秒あたり 8 進むかどうかを見て、黙って再起動していないかを判定する。
+    SharedMemory.reg.meas_count    = 0;
+    SharedMemory.reg.err_count     = 0;
     for (uint8_t i = 0; i < 8; i++) SharedMemory.reg.value[i] = 0.0f;
 
     // SHT4x 初期化 (失敗しても status1 = STATUS1_ALL_STALE で通知して継続)
@@ -203,6 +207,11 @@ int main(void)
         {
             g_meas_tick = false;
 
+            // 計測周期ごとに +1。255 の次は 0 に戻る (uint8 の自然な巻き戻り)。
+            // SHT4x の読み取りが失敗しても進める。「MCU が生きて回っているか」だけを
+            // 表す信号にしたいので、センサの調子は status1 に任せる。
+            SharedMemory.reg.meas_count++;
+
             // TWI0 クライアントの固着検出。
             //
             // SCL を離す手段は SCMD だけだが、生成ドライバにはそれを出さずに ISR を
@@ -216,10 +225,10 @@ int main(void)
             // 立ちっぱなしなら異常と断定してよいので、強制的に取引を終わらせる。
             if (TWI0.SSTATUS & TWI_CLKHOLD_bm) {
                 if (++clkhold_ticks >= CLKHOLD_STUCK_TICKS) {
-                    // 解放していなかったのが自分だったことを親機に知らせる (0x2A)。
-                    // バス上の全員が同じ症状に見えるので、これ以外に犯人を特定
-                    // する手段がない。
-                    if (SharedMemory.reg.hold_count < 0xFF) SharedMemory.reg.hold_count++;
+                    // 解放していなかったのが自分だったことを err_count (0x2B) に足して
+                    // 親機に知らせる。バス上の全員が同じ症状に見えるので、これ以外に
+                    // 犯人を特定する手段がない。
+                    if (SharedMemory.reg.err_count < 0xFF) SharedMemory.reg.err_count++;
                     TWI0.SSTATUS = (TWI_COLL_bm | TWI_BUSERR_bm | TWI_APIF_bm | TWI_DIF_bm);
                     TWI0.SCTRLB  = TWI_ACKACT_NACK_gc | TWI_SCMD_COMPTRANS_gc;
                     clkhold_ticks = 0;

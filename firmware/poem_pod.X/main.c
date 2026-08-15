@@ -268,11 +268,14 @@ static void handleScanRequest(void)
 
 // 1 ノードを poll → JSON 生成 → publish。Status2==1 なら seq +1 して 0 を書き戻す。
 // I²C 失敗時は status1 を STATUS1_ALL_STALE (0xFF) で上書きし、value は前回値のまま publish する。
-// 子機の自己診断カウンタ (0x2A/0x2B) を publish する。
+// 子機の I2C 異常カウンタ (0x2B) を publish する。
 //
 // I2C は 2 本を全員で共有しているので、1 台が SCL を解放しないとバス上の全ノードが止まる。
 // 症状は全台同じに見えて親機からは区別できないため、子機自身に数えさせてここで運ぶ。
 // 値が変わったときだけ出すので、平常時はまったく流れない。
+//
+// 0x2A (計測回数) はここには載せない。毎秒 5〜8 ずつ動く値なので、変化を条件に
+// すると全ノードが毎秒 publish することになる。こちらは nodes/data の sq で見る。
 //
 // トピックはサーバにとって未知なのでログに出るだけで、判定処理には影響しない。
 static void publishNodeDiag(const slave_node_t* node)
@@ -284,9 +287,9 @@ static void publishNodeDiag(const slave_node_t* node)
     if (tlen <= 0 || (size_t)tlen >= sizeof(topic)) return;
 
     int len = snprintf((char*)payload, sizeof(payload),
-                       "{\"id\":%lu,\"hld\":%u,\"err\":%u}",
+                       "{\"id\":%lu,\"err\":%u}",
                        (unsigned long)node->device_id,
-                       (unsigned)node->hold_count, (unsigned)node->err_count);
+                       (unsigned)node->err_count);
     if (len <= 0 || (size_t)len >= sizeof(payload)) return;
 
     MA_publish(topic, payload, (uint16_t)len);
@@ -298,8 +301,7 @@ static void pollAndPublishOne(slave_node_t* node)
     uint8_t payload[256];
 
     // 自己診断カウンタの増加を検出するため、読む前の値を控える。
-    uint8_t prev_hold = node->hold_count;
-    uint8_t prev_err  = node->err_count;
+    uint8_t prev_err = node->err_count;
 
     if (NM_pollOne(node)) {
         // 通信成功: status1 は NM_pollOne が子機から読み出した値で上書き済み
@@ -311,7 +313,7 @@ static void pollAndPublishOne(slave_node_t* node)
         }
 
         // 自己診断カウンタが動いたら知らせる。平常時はまったく流れない。
-        if (node->hold_count != prev_hold || node->err_count != prev_err) {
+        if (node->err_count != prev_err) {
             publishNodeDiag(node);
         }
     } else {

@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace PoEMServer
 {
@@ -48,7 +48,13 @@ namespace PoEMServer
         [JsonPropertyName("st")]
         public byte Status1 { get; set; }
 
-        /// <summary>親機側で管理されるシーケンス番号 (0..254、255=未計測)</summary>
+        /// <summary>
+        /// 子機自身が数えた計測回数 (0..255、255 の次は 0、再起動で 0)。
+        /// 進み方は機種で異なる (温湿度 125ms 周期で毎秒 +8、風速は毎秒 +5)。
+        /// 0x2A 未対応の子機は 0 のまま動かない。
+        /// 以前は親機側で管理するシーケンス番号 (新値ごとに +1、255=未計測) だったが、
+        /// 子機が黙って再起動しても止まらず生存監視に使えなかったため差し替えた。
+        /// </summary>
         [JsonPropertyName("sq")]
         public byte Seq { get; set; }
 

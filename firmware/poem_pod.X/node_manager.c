@@ -56,9 +56,11 @@ static bool readInfoBlock(uint8_t i2c_addr, slave_node_t* node)
     if ((unsigned char)node->name[0] == 0xFF) node->name[0] = '\0';
 
     // 計測関連は未取得状態で初期化
-    node->status1 = 0;
-    node->status2 = 0;
-    node->seq     = SEQ_INITIAL;
+    node->status1    = 0;
+    node->status2    = 0;
+    node->seq        = SEQ_INITIAL;
+    node->meas_count = 0;
+    node->err_count  = 0;
     memset(node->value, 0, sizeof(node->value));
 
     return true;
@@ -213,7 +215,7 @@ bool NM_pollOne(slave_node_t* node)
     node->status2 = buf[REG_STATUS2 - POLL_BLOCK_OFFSET];
 
     // 0x2A/0x2B: 子機の自己診断カウンタ。未対応の子機は 0 のまま。
-    node->hold_count = buf[REG_HOLD_COUNT - POLL_BLOCK_OFFSET];
+    node->meas_count = buf[REG_MEAS_COUNT - POLL_BLOCK_OFFSET];
     node->err_count  = buf[REG_ERR_COUNT  - POLL_BLOCK_OFFSET];
 
     // 0x1C~0x3B: float[8] LE — Status2==1 (子機が新値を準備済み) のときだけ取り込む。
@@ -312,10 +314,14 @@ uint16_t NM_buildDataJson(const slave_node_t* node, char* buf, uint16_t bufsize)
     char* end = buf + bufsize;
     int   n;
 
+    // sq は子機が数えた計測回数 (0x2A) をそのまま載せる。親機管理の seq は
+    // 「親機が新値を観測した回数」なので、子機が黙って再起動していても止まらない。
+    // 子機自身のカウンタなら、進み方が崩れればその個体が落ちたと一目で分かる。
+    // 歩幅は機種で違う (温湿度 8/秒、風速 5/秒)。0x2A 未対応の子機は 0 のまま。
     n = snprintf(p, end - p, "{\"id\":%lu,\"st\":%u,\"sq\":%u,\"v\":[",
                  (unsigned long)node->device_id,
                  (unsigned)node->status1,
-                 (unsigned)node->seq);
+                 (unsigned)node->meas_count);
     if (n < 0 || n >= end - p) return 0;
     p += n;
 
