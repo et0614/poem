@@ -24,6 +24,7 @@
 #include <string.h>
 #include <math.h>
 #include <avr/sleep.h>
+#include <avr/wdt.h>
 
 // </editor-fold>
 
@@ -183,6 +184,12 @@ int main(void)
     uint8_t meas_div     = 0;
     while (1)
     {
+        // WDT は SYSTEM_Initialize() 内で 4.1 秒周期に設定されている
+        // (mcc_generated_files/system/src/system.c の WDT_Initialize)。
+        // 呼ばないでいると 4.1 秒ごとに勝手に再起動する。温湿度センサでは
+        // これが抜けていて、I2C バス全体を止める原因になっていた (#7)。
+        wdt_reset();
+
         // マスタからの設定変更リクエスト
         if (I2C_Config_Update_Requested)
         {
@@ -281,12 +288,15 @@ int main(void)
             }
         }
 
-        // スリープモードを選択
-        if (SharedMemory.reg.enable == 1 || I2C_Is_Busy || 0 < I2C_KeepAlive_Ticks) {
-            set_sleep_mode(SLEEP_MODE_IDLE);
-        } else {
-            set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-        }
+        // スリープは IDLE 固定 (起動時に設定済み)。
+        //
+        // 以前は enable=0 かつ I2C が空いているときに PWR_DOWN へ落としていたが、
+        // WDT を有効にしたので使えない。RTC が RUNSTDBY disabled のため PWR_DOWN
+        // では tick が来ず、main ループが回らず wdt_reset() を呼べない。一方 WDT は
+        // 専用発振器で動き続けるので、4.1 秒後に誤って再起動してしまう。
+        //
+        // pod から給電されていて低消費電力の必要が無く、起動時に enable=1 を
+        // 書いているので PWR_DOWN には元々到達していなかった。
         sleep_mode();
     }
 }
