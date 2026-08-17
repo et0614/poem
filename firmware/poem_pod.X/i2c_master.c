@@ -27,9 +27,10 @@
 //   ・転送を開始できずに即失敗し続ける状態 (待たないので一気に増える)
 // の区別がつかなかった。実測で 1 秒に 100 以上増えた事例があり、そのときも
 // どちらなのか判断できず、解釈を三度変える羽目になった。
-static uint16_t i2c_fail_count    = 0;   // 失敗の合計 = timeout + start
+static uint16_t i2c_fail_count    = 0;   // 失敗の合計 = timeout + start + node_lost
 static uint16_t i2c_fail_timeout  = 0;   // 内訳: 完了待ちタイムアウト
 static uint16_t i2c_fail_start    = 0;   // 内訳: 転送を開始できなかった
+static uint16_t i2c_node_lost     = 0;   // 内訳: 子機が読めなくなった (NACK)
 static uint16_t i2c_recover_count = 0;   // バス強制復帰を実行した累計
 
 // 直近の失敗時の MSTATUS。復帰処理がレジスタを初期化する前に控える。
@@ -164,6 +165,12 @@ static bool i2c_start_failed(void)
     return false;
 }
 
+// 子機が読めなくなったことを 1 件数える。呼ぶ条件は i2c_master.h を参照。
+void I2C_CountNodeLost(void)
+{
+    i2c_count_fail(&i2c_node_lost);
+}
+
 // I2C の診断情報を取得する。
 void I2C_GetDiag(i2c_diag_t *diag)
 {
@@ -171,10 +178,11 @@ void I2C_GetDiag(i2c_diag_t *diag)
 
     diag->mstatus      = TWI1.MSTATUS;
     diag->failMstatus  = i2c_fail_mstatus;
-    diag->failCount    = i2c_fail_count;
-    diag->failTimeout  = i2c_fail_timeout;
-    diag->failStart    = i2c_fail_start;
-    diag->recoverCount = i2c_recover_count;
+    diag->failCount     = i2c_fail_count;
+    diag->failTimeout   = i2c_fail_timeout;
+    diag->failStart     = i2c_fail_start;
+    diag->nodeLostCount = i2c_node_lost;
+    diag->recoverCount  = i2c_recover_count;
     diag->sdaLowCount  = i2c_sda_low_count;
     diag->sclLowCount  = i2c_scl_low_count;
 }

@@ -230,14 +230,15 @@ static void publishDiag(void)
     i2c_diag_t d;
     I2C_GetDiag(&d);
 
-    // 最悪値 (すべて 5 桁) でも 111 文字 + NUL。余裕をみて 128。
-    char payload[128];
+    // 最悪値 (すべて 5 桁) でも 125 文字 + NUL。余裕をみて 160。
+    char payload[160];
     int len = snprintf(payload, sizeof(payload),
                        "{\"mst\":%u,\"fail\":%u,\"rcv\":%u,"
-                       "\"to\":%u,\"sf\":%u,\"fm\":%u,\"scn\":%u,"
+                       "\"to\":%u,\"sf\":%u,\"lost\":%u,\"fm\":%u,\"scn\":%u,"
                        "\"sdl\":%u,\"scl\":%u}",
                        (unsigned)d.mstatus, (unsigned)d.failCount, (unsigned)d.recoverCount,
                        (unsigned)d.failTimeout, (unsigned)d.failStart,
+                       (unsigned)d.nodeLostCount,
                        (unsigned)d.failMstatus, (unsigned)NM_ScanCount,
                        (unsigned)d.sdaLowCount, (unsigned)d.sclLowCount);
 
@@ -318,6 +319,12 @@ static void pollAndPublishOne(slave_node_t* node)
         }
     } else {
         // 通信失敗: 全計測値が信頼できないことを示す。リストからは外さない (生存確認のため publish 継続)
+        //
+        // NM_pollOne() は I2C_WriteRead() が失敗した時点で戻るので、status1 はまだ
+        // 前回の値を持っている。読めなくなった瞬間だけを数えられる。
+        if (node->status1 != STATUS1_ALL_STALE) {
+            I2C_CountNodeLost();
+        }
         node->status1 = STATUS1_ALL_STALE;
     }
 

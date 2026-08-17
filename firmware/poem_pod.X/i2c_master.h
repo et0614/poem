@@ -39,9 +39,10 @@ bool I2C_WriteByteAndStop(uint8_t address, uint8_t data);
 typedef struct {
     uint8_t  mstatus;       // 現在の TWI1.MSTATUS。下位 2bit が BUSSTATE (1=IDLE)
     uint8_t  failMstatus;   // 直近の失敗時の MSTATUS (復帰処理で消される前の値)
-    uint16_t failCount;     // 失敗の合計 = failTimeout + failStart (NACK は含まない)
+    uint16_t failCount;     // 失敗の合計 = failTimeout + failStart + nodeLostCount
     uint16_t failTimeout;   // 内訳: 完了待ちタイムアウト。1 回あたり約 100 ミリ秒かかる
     uint16_t failStart;     // 内訳: 転送を開始できなかった。待たないので一気に増える
+    uint16_t nodeLostCount; // 内訳: 子機が読めなくなった回数。I2C_CountNodeLost() を参照
     uint16_t recoverCount;  // バス強制復帰を実行した累計
     uint16_t sdaLowCount;   // 復帰に入った時点で SDA が Low に張り付いていた回数
     uint16_t sclLowCount;   // 同じく SCL。SDA と分けるのは原因が違うため
@@ -49,6 +50,16 @@ typedef struct {
 
 // I2C の診断情報を取得する。
 void I2C_GetDiag(i2c_diag_t *diag);
+
+// 子機が読めなくなったことを 1 件数える。
+//
+// 相手がいないと NACK になるが、この経路は転送の開始にも完了待ちにも失敗しない
+// ため、failTimeout / failStart のどちらにも現れない。実際にセンサを抜いた実験
+// では status1 が 255 になるだけで、pod 側には何の記録も残らなかった。
+//
+// 呼ぶのは status1 が 0 以外から STATUS1_ALL_STALE へ変わった瞬間だけ。毎周期
+// 数えると、抜いている時間の長さがそのまま件数になり「何回起きたか」が読めない。
+void I2C_CountNodeLost(void);
 
 #ifdef	__cplusplus
 }
