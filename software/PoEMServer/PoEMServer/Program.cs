@@ -137,8 +137,16 @@ namespace PoEMServer
             };
 
             await mqttServer.StartAsync();
-            Console.WriteLine("MQTT broker started. Press Enter to terminate.");
-            Console.ReadLine();
+            //Console.WriteLine("MQTT broker started. Press Enter to terminate.");
+            //Console.ReadLine();
+            Console.WriteLine("MQTT broker started.");
+
+            // systemd 配下では stdin が端末ではないので Console.ReadLine() が即 null を返す。
+            // SIGTERM (systemctl stop) と Ctrl-C の両方で抜けられるようにする。
+            using var stopping = new ManualResetEventSlim(false);
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => stopping.Set();
+            Console.CancelKeyPress += (_, e) => { e.Cancel = true; stopping.Set(); };
+            stopping.Wait();
             await mqttServer.StopAsync();
         }
 
