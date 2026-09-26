@@ -268,13 +268,18 @@ void NM_buildDataTopic(const slave_node_t* node, char* buf, uint16_t bufsize)
 
 // JSON ビルダ -----------------------------------------------------------------
 
-// 浮動小数点を有効数字 4 桁に丸める。
+// 浮動小数点を有効数字 6 桁に丸める。
 // NaN/Inf はそのまま返す (snprintf 側で "nan"/"inf" になる)。
-static float roundTo4Sigfig(float x)
+//
+// 以前は 4 桁だったが、絶対圧センサ (BMP585) の大気圧 101325 Pa が 101300 Pa に
+// なり、分解能が 100 Pa まで落ちる (センサの相対精度は ±6 Pa)。単位を hPa/kPa に
+// しても桁数は同じなので解決しない。6 桁なら 1e5 付近で 1 Pa 刻み。float の仮数は
+// 24 bit (約 7 桁) なので、x * factor が 999999.5 以下に収まるこの丸めは誤差なく動く。
+static float roundTo6Sigfig(float x)
 {
     if (!isfinite(x) || x == 0.0f) return x;
     float magnitude = floorf(log10f(fabsf(x)));
-    float factor    = powf(10.0f, 3 - magnitude); // 4 桁目で丸める
+    float factor    = powf(10.0f, 5 - magnitude); // 6 桁目で丸める
     return roundf(x * factor) / factor;
 }
 
@@ -326,9 +331,10 @@ uint16_t NM_buildDataJson(const slave_node_t* node, char* buf, uint16_t bufsize)
     p += n;
 
     for (uint8_t i = 0; i < node->data_count; i++) {
-        float v = roundTo4Sigfig(node->value[i]);
-        // %g は有効数字 6 桁が既定。precision を 4 に絞り、不要なゼロは省略させる。
-        n = snprintf(p, end - p, "%s%.4g",
+        float v = roundTo6Sigfig(node->value[i]);
+        // %g は不要なゼロを省略する。最長でも "-1.23457e-05" の 12 文字 × 8 個に
+        // 収まるので、呼び出し側の payload[256] で足りる。
+        n = snprintf(p, end - p, "%s%.6g",
                      (i == 0 ? "" : ","),
                      (double)v);
         if (n < 0 || n >= end - p) return 0;

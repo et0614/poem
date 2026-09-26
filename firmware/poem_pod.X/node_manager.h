@@ -67,7 +67,7 @@ void NM_buildDataTopic  (const slave_node_t* node, char* buf, uint16_t bufsize);
 uint16_t NM_buildConfigJson(const slave_node_t* node, char* buf, uint16_t bufsize);
 
 // data トピック向け JSON を構築する。Schema 図 4 準拠 ({id, st, sq, v})。
-// st は status1 の値そのまま、sq は親機管理シーケンス番号、v は有効数字 4 桁丸め。
+// st は status1 の値そのまま、sq は親機管理シーケンス番号、v は有効数字 6 桁丸め。
 // 戻り値: 書き込まれたバイト数。失敗時は 0。
 uint16_t NM_buildDataJson(const slave_node_t* node, char* buf, uint16_t bufsize);
 
