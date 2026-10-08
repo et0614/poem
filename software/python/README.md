@@ -16,6 +16,7 @@
 
 ```
 pip install hidapi
+pip install matplotlib      # グラフ表示 (--plot) を使うときだけ
 ```
 
 - MCP2221 / CP2112 はどちらも Windows の標準 HID として認識されるので、ドライバのインストールは要らない。
@@ -28,7 +29,9 @@ cd software/python
 python osl_reader.py                            バスを走査し、見つかった子機をすべて表示
 python osl_reader.py --addr 0x10                指定アドレスの子機だけ表示
 python osl_reader.py --watch 1                  1 秒ごとに計測値を表示し、CSV にも書き出す
-python osl_reader.py --watch 1 --csv log.csv    CSV のファイル名を指定する
+python osl_reader.py --watch 1 --csv log.csv    CSV のファイル名を指定する (子機ごとに log_0xNN.csv)
+python osl_reader.py --plot                     計測値をグラフでリアルタイム表示する (1 秒ごと)
+python osl_reader.py --plot --span 3600         グラフの横軸を直近 1 時間にする (既定 600 秒)
 python osl_reader.py --bridge cp2112            CP2112 に固定する
 python osl_reader.py --bridge mcp2221           MCP2221 に固定する
 python osl_reader.py --serial XXXX              ブリッジが複数あるときにシリアル番号で選ぶ
@@ -50,7 +53,7 @@ CP2112 を使いたければ `--bridge cp2112` を付ける。
   Data count: 2  units=[53, 62]
   Status1   : 0x00
   meas_count: 143   err_count: 0
-  Values    : -0.0197917 Pa, 21.7906 °C
+  Values    : -0.02 Pa, 21.79 °C
   補正係数  : 差圧 y = 1 x + 0
               温度 y = 1 x + 0
 ```
@@ -71,8 +74,11 @@ CP2112 を使いたければ `--bridge cp2112` を付ける。
 ### watch 表示
 
 ```
-23:03:49 [0x10] st=0x00 Δsq=  8  -0.0427083 Pa, 21.6663 °C
+23:03:49 [0x10] st=0x00 Δsq=  8  -0.04 Pa, 21.67 °C
 ```
+
+計測値は小数点以下 2 桁で表示する (グラフの最新値・目盛・ホバー表示も同じ)。
+CSV には丸めずに float の精度いっぱいで書く。桁数は `osl_reader.py` の `VALUE_DECIMALS` で変えられる。
 
 `Δsq` は前回からの meas_count の進み。正常なら 1 秒間隔で 8 前後になる。
 PC と子機の時計がわずかにずれているため、ときどき 7 や 9 が出るのは正常。
@@ -80,8 +86,10 @@ PC と子機の時計がわずかにずれているため、ときどき 7 や 9
 
 ### CSV
 
-`--watch` 中は毎回の読み出しを CSV に追記する。ファイル名を指定しなければ、実行したフォルダに
-`osl_YYYYMMDD_HHMMSS.csv` を作る。毎周期ディスクへ書き出すので、途中で止めてもそこまでのデータは残る。
+`--watch` 中は毎回の読み出しを CSV に追記する。**子機ごとに別のファイル**にし、ファイル名の
+末尾に子機のアドレスを付ける。ファイル名を指定しなければ、実行したフォルダに
+`osl_YYYYMMDD_HHMMSS_0x11.csv`、`osl_YYYYMMDD_HHMMSS_0x45.csv` のように作る。
+`--csv log.csv` と指定すると `log_0x11.csv`、`log_0x45.csv` になる。毎周期ディスクへ書き出すので、途中で止めてもそこまでのデータは残る。
 BOM 付き UTF-8 なので Excel でそのまま開ける。
 
 ```
@@ -89,10 +97,46 @@ datetime,addr,device_id,name,sensor,result,status1,meas_count,delta_sq,err_count
 2026-10-06T23:03:49.251,0x10,3688892,,差圧センサ (SDP810),ok,0,120,8,0,-0.04270833,Pa,21.66625,°C
 ```
 
-- 1 行が「1 回の読み出し × 1 台」。子機が複数あっても 1 ファイルにまとめ、`addr` 列で区別する。
-- `value_i` と `unit_i` が対になっている。値は float の精度いっぱい (7 桁) で書く。
+- 1 行が 1 回の読み出し。どの子機も同じ時刻に読むので、ファイル間で `datetime` が揃う。
+- `value_i` と `unit_i` が対になっている。列の数は子機の計測値の数で決まる。値は float の精度いっぱい (7 桁) で書く。
 - 読み出しに失敗した回は `result` が `read_failed` の行になり、値の列は空になる。
 - 値が有効かどうかは `status1` の bit i で判断する (0 なら全計測値が有効)。
+
+### グラフ (--plot)
+
+`--plot` を付けると、watch と同じ読み出しをしながらグラフのウィンドウを開く。
+コンソール表示と CSV 書き出しも同時に行う。ウィンドウを閉じると終了する。
+`--watch` を省略したときは 1 秒周期になる。
+
+- 子機ごとに 1 行、計測値ごとに 1 列のグラフを並べる。単位の違う値 (気圧と温度など) は
+  別のグラフに分け、縦軸を 2 本にはしない。
+- 各グラフの左上に子機と計測値の名前、右上に最新値を出す。
+- 横軸は直近 `--span` 秒。縦軸は表示中の範囲の値に合わせて自動で伸び縮みする。
+- stale の値と読み出し失敗は線が途切れる。右上の最新値も「無効」「読み出し失敗」になる。
+- マウスを重ねると、その時刻の値を表示する。拡大・移動はウィンドウ下のツールバーで行う。
+- 描画のコードは `osl_plot.py` にある。
+
+## osl_set_address.py — I2C アドレスを変更する
+
+```
+python osl_set_address.py 0x10 0x11          0x10 の子機を 0x11 に変える (確認あり)
+python osl_set_address.py 0x10 0x11 --yes    確認せずに変える
+```
+
+`--bridge` と `--serial` は osl_reader.py と同じ。
+
+1. 現在のアドレスにいる子機の機種・Device ID・名前を表示する。
+2. 新しいアドレスに別の機器がいないか確かめる (いれば中止)。
+3. 確認のあと、鍵 0xA5 と新アドレスを 1 回の書き込みで送る。
+4. 新しいアドレスで同じ Device ID の子機が応答することを確かめる。
+
+子機は書き込みを受けた時点で EEPROM に保存し、そのまま新しいアドレスに切り替わる。
+リセットや電源の入れ直しは要らない。新しいアドレスは 0x08-0x77 の範囲で選ぶ。
+
+- PoEMServer の BACnet オブジェクト番号は I2C アドレス × 100 なので、アドレスを変えると
+  その子機の番号も変わる (0x10 → 0x11 なら 1600- → 1700-)。
+- 親機につないだまま変えた場合、新しいアドレスは 10 秒以内に新しい子機として見つかるが、
+  古いアドレスは応答なしのまま一覧に残る。親機の HTTP 設定画面で SCAN をやり直すと消える。
 
 ## mcp2221_driver.py — MCP2221 ドライバ
 

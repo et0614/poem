@@ -10,14 +10,17 @@ usage:
     python osl_reader.py                  バスを走査し、見つかった子機をすべて表示
     python osl_reader.py --addr 0x10      指定アドレスの子機だけ表示
     python osl_reader.py --watch 1        1 秒ごとに計測値を表示し続ける (Ctrl+C で終了)
-                                          CSV (osl_YYYYMMDD_HHMMSS.csv) にも書き出す
-    python osl_reader.py --watch 1 --csv log.csv   CSV のファイル名を指定する
+                                          CSV (osl_YYYYMMDD_HHMMSS_0xNN.csv、子機ごと) にも書き出す
+    python osl_reader.py --watch 1 --csv log.csv   CSV のファイル名を指定する (log_0xNN.csv になる)
+    python osl_reader.py --watch 1 --plot          グラフでも表示する (osl_plot.py)
+    python osl_reader.py --watch 1 --plot --span 3600   グラフの横軸を直近 1 時間にする
     python osl_reader.py --bridge cp2112  CP2112 に固定する (既定は auto)
     python osl_reader.py --serial XXXX    ブリッジが複数あるときにシリアル番号で選ぶ
 """
 import argparse
 import csv
 import datetime
+import os
 import struct
 import sys
 import time
@@ -29,6 +32,9 @@ REG_POLL       = 0x28   # POLL BLOCK 0x28-0x4B (36 byte)
 POLL_LEN       = 0x24
 REG_EXTENSION  = 0x4C
 NAME_LEN       = 16
+
+# 画面に出す計測値の小数点以下の桁数 (CSV には float の精度いっぱいで書く)
+VALUE_DECIMALS = 2
 
 # BACnet Engineering Units (ASHRAE 135) のうち子機が使うもの
 UNIT_NAMES = {
@@ -139,7 +145,7 @@ def format_values(info: dict, poll: dict) -> str:
     for i in range(info['count']):
         unit = UNIT_NAMES.get(info['units'][i], f'unit{info["units"][i]}')
         stale = ' (stale)' if (poll['st1'] >> i) & 1 else ''
-        parts.append(f'{poll["values"][i]:.6g} {unit}{stale}')
+        parts.append(f'{poll["values"][i]:.{VALUE_DECIMALS}f} {unit}{stale}')
     return ', '.join(parts)
 
 
@@ -170,14 +176,19 @@ def show(dev, addr: int):
     print()
 
 
-def open_csv(path: str, infos: dict):
-    """CSV を開いてヘッダを書き、(file, writer) を返す。
+def csv_path_for(base: str, addr: int) -> str:
+    """子機ごとの CSV ファイル名。log.csv → log_0x11.csv"""
+    stem, ext = os.path.splitext(base)
+    return f'{stem}_0x{addr:02X}{ext or ".csv"}'
 
-    子機が複数あっても 1 ファイルにまとめ、1 行 = 1 回の読み出し × 1 台にする
-    (縦持ち)。計測値の数と単位は機種で違うので、value_i と unit_i を対にして並べる。
+
+def open_csv(path: str, info):
+    """1 台分の CSV を開いてヘッダを書き、(file, writer, 計測値の数) を返す。
+
+    1 行 = 1 回の読み出し。value_i と unit_i を対にして並べる。
     Excel で ° が化けないよう BOM 付き UTF-8 で書く。
     """
-    n_values = max((i['count'] for i in infos.values() if i), default=0)
+    n_values = info['count'] if info else 0
     f = open(path, 'w', newline='', encoding='utf-8-sig')
     w = csv.writer(f)
     header = ['datetime', 'addr', 'device_id', 'name', 'sensor', 'result',
@@ -188,61 +199,92 @@ def open_csv(path: str, infos: dict):
     return f, w, n_values
 
 
+class Watcher:
+    """子機を周期的に読み、コンソール表示と CSV 書き出しを行う。
+    CSV は子機ごとに別ファイル (csv_path の名前に _0xNN を付けたもの) にする。
+
+    1 周期ぶんの処理を tick() にまとめてあり、テキスト表示 (watch) とグラフ表示
+    (osl_plot.py) の両方から呼ぶ。
+    """
+
+    def __init__(self, dev, addrs: list, csv_path: str):
+        self.dev = dev
+        self.addrs = addrs
+        self.infos = {}
+        for a in addrs:
+            dev.slave_addr = a
+            self.infos[a] = read_info(dev)
+        self.last_sq = {}
+        self.csv_path = csv_path
+        self.csv_paths = {a: csv_path_for(csv_path, a) for a in addrs}
+        self.files = {}     # addr -> (file, writer, 計測値の数)
+        for a in addrs:
+            self.files[a] = open_csv(self.csv_paths[a], self.infos[a])
+
+    def tick(self) -> list:
+        """全子機を 1 回ずつ読む。戻り値は [(addr, info, poll)]。poll は失敗で None"""
+        now = datetime.datetime.now()
+        stamp = now.strftime('%H:%M:%S')
+        iso = now.isoformat(timespec='milliseconds')
+        results = []
+        for a in self.addrs:
+            info = self.infos[a]
+            _f, w, n_values = self.files[a]
+            self.dev.slave_addr = a
+            poll = read_poll(self.dev)
+            if info is None or poll is None:
+                print(f'{stamp} [0x{a:02X}] 読み出し失敗')
+                w.writerow([iso, f'0x{a:02X}',
+                                 info['id'] if info else '', info['name'] if info else '',
+                                 sensor_type(info)[0] if info else '', 'read_failed'])
+                results.append((a, info, None))
+                continue
+            dsq = (poll['sq'] - self.last_sq[a]) % 256 if a in self.last_sq else None
+            self.last_sq[a] = poll['sq']
+            dsq_str = f'Δsq={dsq:3d}' if dsq is not None else 'Δsq=  -'
+            print(f'{stamp} [0x{a:02X}] st=0x{poll["st1"]:02X} {dsq_str}  '
+                  f'{format_values(info, poll)}')
+
+            row = [iso, f'0x{a:02X}', info['id'], info['name'],
+                   sensor_type(info, poll)[0], 'ok',
+                   poll['st1'], poll['sq'], '' if dsq is None else dsq, poll['err']]
+            for i in range(n_values):
+                # float32 の有効桁 (約 7 桁) で書く。stale かどうかは status1 の bit i で判断
+                row += [f'{poll["values"][i]:.7g}',
+                        UNIT_NAMES.get(info['units'][i], info['units'][i])]
+            w.writerow(row)
+            results.append((a, info, poll))
+        # 途中で落ちても読めるよう、毎周期ディスクへ書き出す
+        for f, _w, _n in self.files.values():
+            f.flush()
+        return results
+
+    def print_csv_paths(self):
+        for a in self.addrs:
+            print(f'CSV: {self.csv_paths[a]}')
+
+    def close(self):
+        for f, _w, _n in self.files.values():
+            f.close()
+
+
 def watch(dev, addrs: list, interval: float, csv_path: str):
     """計測値を interval 秒ごとに表示し、CSV にも書き出す。meas_count の進み (Δsq) も出す"""
-    infos = {}
-    for a in addrs:
-        dev.slave_addr = a
-        infos[a] = read_info(dev)
-    last_sq = {}
-
-    f, w, n_values = open_csv(csv_path, infos)
-    print(f'CSV: {csv_path}')
+    watcher = Watcher(dev, addrs, csv_path)
+    watcher.print_csv_paths()
     print('Ctrl+C で終了')
     # sleep(interval) だと読み出しにかかる時間ぶん周期が延び、Δsq がときどき 1 多く出る。
     # 開始時刻からの一定間隔の格子に合わせて待つ。
     next_t = time.perf_counter()
     try:
         while True:
-            now = datetime.datetime.now()
-            stamp = now.strftime('%H:%M:%S')
-            iso = now.isoformat(timespec='milliseconds')
-            for a in addrs:
-                info = infos[a]
-                dev.slave_addr = a
-                poll = read_poll(dev)
-                if info is None or poll is None:
-                    print(f'{stamp} [0x{a:02X}] 読み出し失敗')
-                    w.writerow([iso, f'0x{a:02X}',
-                                info['id'] if info else '', info['name'] if info else '',
-                                sensor_type(info)[0] if info else '', 'read_failed'])
-                    continue
-                dsq = (poll['sq'] - last_sq[a]) % 256 if a in last_sq else None
-                last_sq[a] = poll['sq']
-                dsq_str = f'Δsq={dsq:3d}' if dsq is not None else 'Δsq=  -'
-                print(f'{stamp} [0x{a:02X}] st=0x{poll["st1"]:02X} {dsq_str}  '
-                      f'{format_values(info, poll)}')
-
-                row = [iso, f'0x{a:02X}', info['id'], info['name'],
-                       sensor_type(info, poll)[0], 'ok',
-                       poll['st1'], poll['sq'], '' if dsq is None else dsq, poll['err']]
-                for i in range(n_values):
-                    if i < info['count']:
-                        # float32 の有効桁 (約 7 桁) で書く。stale かどうかは status1 の bit i で判断
-                        row += [f'{poll["values"][i]:.7g}',
-                                UNIT_NAMES.get(info['units'][i], info['units'][i])]
-                    else:
-                        row += ['', '']
-                w.writerow(row)
-            # 途中で落ちても読めるよう、毎周期ディスクへ書き出す
-            f.flush()
-
+            watcher.tick()
             next_t += interval
             time.sleep(max(0.0, next_t - time.perf_counter()))
     except KeyboardInterrupt:
         print()
     finally:
-        f.close()
+        watcher.close()
 
 
 def main():
@@ -254,8 +296,14 @@ def main():
     ap.add_argument('--watch', type=float, metavar='SEC',
                     help='SEC 秒ごとに計測値を表示し続け、CSV にも書き出す')
     ap.add_argument('--csv', metavar='PATH',
-                    help='watch の CSV 出力先 (既定: osl_YYYYMMDD_HHMMSS.csv)')
+                    help='watch の CSV 出力先。子機ごとに _0xNN を付けた名前になる (既定: osl_YYYYMMDD_HHMMSS.csv)')
+    ap.add_argument('--plot', action='store_true',
+                    help='watch の計測値をグラフで表示する (--watch 省略時は 1 秒)')
+    ap.add_argument('--span', type=float, default=600, metavar='SEC',
+                    help='グラフに表示する期間 [秒] (既定 600)')
     args = ap.parse_args()
+    if args.plot and not args.watch:
+        args.watch = 1.0
 
     dev = open_bridge(args.bridge, args.serial)
     if dev is None:
@@ -277,7 +325,17 @@ def main():
 
         if args.watch:
             csv_path = args.csv or datetime.datetime.now().strftime('osl_%Y%m%d_%H%M%S.csv')
-            watch(dev, addrs, args.watch, csv_path)
+            if args.plot:
+                # matplotlib はグラフを使うときだけ読み込む (テキスト表示だけなら不要)
+                import osl_plot
+                watcher = Watcher(dev, addrs, csv_path)
+                watcher.print_csv_paths()
+                try:
+                    osl_plot.run(watcher, args.watch, args.span)
+                finally:
+                    watcher.close()
+            else:
+                watch(dev, addrs, args.watch, csv_path)
     finally:
         dev.close()
     return 0
