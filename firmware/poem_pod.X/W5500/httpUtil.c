@@ -67,6 +67,33 @@ uint8_t http_post_cgi_handler(uint8_t * uri_name, st_http_request * p_http_reque
 // 載らないため分割する。ヘッダ ~710 + 行 ~170×5 + ナビ/フッタ ~250 ≈ 1.8 KB で収まる値。
 #define DEV_PAGE_SIZE       5
 
+// HTML の属性値として書き出す (& < > " をエスケープ。UTF-8 はそのまま)。
+// 戻り値: 書いたバイト数。バッファが足りなければ -1。
+static int html_attr(char* p, char* end, const char* s)
+{
+    char* start = p;
+    for (; *s; s++) {
+        const char* e = NULL;
+        switch (*s) {
+            case '&': e = "&amp;";  break;
+            case '<': e = "&lt;";   break;
+            case '>': e = "&gt;";   break;
+            case '"': e = "&quot;"; break;
+            default: break;
+        }
+        if (e) {
+            size_t n = strlen(e);
+            if ((size_t)(end - p) <= n) return -1;
+            memcpy(p, e, n);
+            p += n;
+        } else {
+            if (end - p <= 1) return -1;
+            *p++ = *s;
+        }
+    }
+    return (int)(p - start);
+}
+
 // GET の URI (例: "/devices.cgi?p=2") からページ番号を取り出す。無指定・不正は 0。
 static uint8_t parsePageParam(const uint8_t* uri)
 {
@@ -150,20 +177,20 @@ uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * uri, uint8_t 
         if (last > NM_NodeCount) last = NM_NodeCount;
 
         n = snprintf(p, end - p,
-            "<!DOCTYPE html><html><head><title>PoEM-pod Devices</title>"
+            "<!DOCTYPE html><html><head><meta charset=utf-8><title>PoEM-pod Devices</title>"
             "<style>"
-            "body{font-family:sans-serif;width:520px;margin:10px auto;font-size:13px}"
+            "body{font-family:sans-serif;width:640px;margin:10px auto;font-size:13px}"
             "table{border-collapse:collapse;width:100%%}"
             "th,td{padding:2px 6px;border-bottom:1px solid #ddd;text-align:left}"
             "th{background:#eee}"
-            "input[type=text]{width:60px;padding:2px}"
+            "input[type=text]{width:220px;padding:2px}"
             "input[type=number]{width:48px;padding:2px}"
             "input[type=submit],a.btn{padding:4px 12px;margin:8px 4px 0 0;display:inline-block}"
             "</style></head><body>"
             "<h3>Detected Devices (%u)</h3>"
             "<p style=\"font-size:11px;color:#666\">Addr is decimal (8-119 = 0x08-0x77). Changes take effect immediately.</p>"
             "<form method=post action=/devices.cgi>"
-            "<table><tr><th>#<th>Addr<th>DeviceID<th>St1<th>N<th>Name</tr>",
+            "<table><tr><th>#<th>Addr<th>DeviceID<th>Stale<th>N<th>Name</tr>",
             (unsigned)NM_NodeCount);
         if (n < 0 || n >= end - p) { *len = 0; return 0; }
         p += n;
@@ -172,18 +199,31 @@ uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * uri, uint8_t 
         // パラメータ名は a00~a63 / n00~n63 の 2 桁固定。1 桁だと POST 側の strstr 検索で
         // "n1" が "n10" に誤マッチするため、全キーを同じ長さに揃えて部分一致を排除する。
         for (uint8_t i = first; i < last; i++) {
-            if ((end - p) < 280) break;  // 残り 280 byte 切ったらフォーム閉じへ
+            // 1 行は名前のエスケープ込みで最大 600 byte 程度。足りなければフォームを閉じる
+            if ((end - p) < 600) break;
             const slave_node_t* nd = &NM_Nodes[i];
+
+            // 名前は保持していないので子機から読む (UTF-8、63 byte まで)
+            char name[NAME_LEN];
+            NM_readName(nd, name);
+
             n = snprintf(p, end - p,
                 "<tr><td>%u"
                 "<td><input type=number name=a%02u value=%u min=8 max=119>"
-                "<td>%lu<td>0x%02X<td>%u"
-                "<td><input type=text name=n%02u value=\"%s\" maxlength=15></tr>",
+                "<td>%lu<td>%s%X<td>%u"
+                "<td><input type=text name=n%02u maxlength=63 value=\"",
                 (unsigned)i,
                 (unsigned)i, (unsigned)nd->i2c_addr,
                 (unsigned long)nd->device_id,
-                (unsigned)nd->status1, (unsigned)nd->data_count,
-                (unsigned)i, nd->name);
+                nd->comm_ok ? "0x" : "-", (unsigned)(nd->comm_ok ? nd->stale_mask : 0),
+                (unsigned)nd->data_count,
+                (unsigned)i);
+            if (n < 0 || n >= end - p) break;
+            p += n;
+            n = html_attr(p, end, name);
+            if (n < 0) break;
+            p += n;
+            n = snprintf(p, end - p, "\"></tr>");
             if (n < 0 || n >= end - p) break;
             p += n;
         }
@@ -241,7 +281,8 @@ static bool addrConflictsWithOthers(uint8_t self_idx, uint8_t new_addr)
 static uint8_t process_devices_post(uint8_t * uri, uint8_t * buf, uint16_t * len)
 {
     char param_name[6];        // "a63\0" / "n63\0" 程度
-    char new_name[NODE_NAME_LEN];
+    char new_name[NAME_LEN];
+    char cur_name[NAME_LEN];
 
     // ===== アドレス変更 (先に処理) =============================================
     // 同じ POST 内でアドレスと名前の両方が来ても、アドレス変更後に新アドレスで name を書ける。
@@ -268,12 +309,13 @@ static uint8_t process_devices_post(uint8_t * uri, uint8_t * buf, uint16_t * len
         uint8_t* val = get_http_param_value((char*)uri, param_name);
         if (!val) continue;
 
-        // 入力を NODE_NAME_LEN-1 文字に切り詰めて NUL 終端
-        memset(new_name, 0, NODE_NAME_LEN);
-        strncpy(new_name, (char*)val, NODE_NAME_LEN - 1);
+        // UTF-8 で 63 byte に切り詰めて NUL 終端 (多バイト文字の途中では切らない)
+        memset(new_name, 0, NAME_LEN);
+        strncpy(new_name, (char*)val, NAME_LEN - 1);
+        NM_truncateUtf8(new_name, NAME_LEN - 1);
 
-        // 既存名と同じならスキップ (I²C と EEPROM の摩耗回避)
-        if (memcmp(NM_Nodes[i].name, new_name, NODE_NAME_LEN) == 0) continue;
+        // 既存名と同じならスキップ (I²C と EEPROM の摩耗回避)。名前は子機から読む。
+        if (NM_readName(&NM_Nodes[i], cur_name) && strcmp(cur_name, new_name) == 0) continue;
 
         // 子機 EEPROM へ永続化 (失敗しても他ノード処理は継続)
         NM_writeName(&NM_Nodes[i], new_name);

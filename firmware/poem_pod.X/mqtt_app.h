@@ -26,6 +26,10 @@ extern "C" {
 // MQTT 送受信バッファサイズ
 #define MQTT_BUF_SIZE       2048
 
+// 送受信バッファ (HTTP 設定モードと MQTT 通信モードで共用する。実体は mqtt_app.c)
+extern uint8_t g_io_tx_buf[MQTT_BUF_SIZE];
+extern uint8_t g_io_rx_buf[MQTT_BUF_SIZE];
+
 // 親機グローバルの MQTT クライアント (内部状態保持)
 extern MQTTClient MA_Client;
 

@@ -16,12 +16,15 @@
 // MQTT クライアント本体 (W5500 ライブラリの構造体)
 MQTTClient MA_Client;
 
-// MQTT 接続用ネットワーク構造体・送受信バッファは静的に確保。
+// MQTT 接続用ネットワーク構造体は静的に確保。
 // classic 実装ではローカル変数だったが、MQTTClientInit がポインタを保持するため
 // スコープを永続化する必要がある。
 static Network  s_mqtt_net;
-static uint8_t  s_mqtt_tx_buf[MQTT_BUF_SIZE];
-static uint8_t  s_mqtt_rx_buf[MQTT_BUF_SIZE];
+
+// 送受信バッファ。HTTP 設定モードと MQTT 通信モードは同時に動かないので、両方で
+// 共用する (別々に持つと 4 KB 余分にかかり、SRAM 16 KB のうち 15 KB に達していた)。
+uint8_t g_io_tx_buf[MQTT_BUF_SIZE];
+uint8_t g_io_rx_buf[MQTT_BUF_SIZE];
 
 // MAC アドレス: 上 3 バイト = WIZnet OUI (00:08:DC)、下 3 バイト = AVR の SIGROW
 // シリアル番号 (SERNUM7..9) で代用する。チップ固有なので装置間で重複しにくい。
@@ -99,8 +102,8 @@ bool MA_connect(void)
 
     // MQTT クライアント初期化 (静的バッファを渡す)
     MQTTClientInit(&MA_Client, &s_mqtt_net, MQTT_COMMAND_TIMEOUT_MS,
-                   s_mqtt_tx_buf, sizeof(s_mqtt_tx_buf),
-                   s_mqtt_rx_buf, sizeof(s_mqtt_rx_buf));
+                   g_io_tx_buf, sizeof(g_io_tx_buf),
+                   g_io_rx_buf, sizeof(g_io_rx_buf));
 
     // CONNECT パケットの組み立て
     char client_id_buf[20];

@@ -224,12 +224,11 @@ static bool wait_for_completion(void)
 
 bool I2C_IsConnected(uint8_t address)
 {
-   // ダミーデータ（送信はされないがポインタとして必要）
-    uint8_t dummy = 0;
-
-    // 長さ0で書き込みを試みる (アドレス送信 -> ACKチェック -> Stop)
-    // Melodyのバージョンによっては、長さ0だと何もせずtrueを返す場合があるため要確認
-    if (!TWI1_Write(address, &dummy, 0)) return i2c_start_failed();
+    // 1 バイト読んで ACK を確かめる。以前は長さ 0 の書き込みだったが、相手が何の機器か
+    // 分からない段階で書き込みを送ると、機器によってはレジスタを書き換えるおそれがある
+    // (OSL v2 の走査の約束: 正体が分かるまで書き込まない)。
+    uint8_t dummy;
+    if (!TWI1_Read(address, &dummy, 1)) return i2c_start_failed();
 
     return wait_for_completion();
 }

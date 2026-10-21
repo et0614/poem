@@ -3,6 +3,7 @@
 #include <math.h>
 #include "node_manager.h"
 #include "i2c_master.h"
+#include "utility.h"
 
 slave_node_t NM_Nodes[MAX_NODES];
 uint8_t      NM_NodeCount = 0;
@@ -14,127 +15,131 @@ uint8_t      NM_NodeCount = 0;
 // 桁が違うため、この値が同時に増えたかどうかを見ないと fail の急増を誤読する。
 uint16_t     NM_ScanCount = 0;
 
+// 応答はあったが OSL v2 子機ではなかったアドレス (bit n = アドレス n)。
+// 正体の分からない機器を 10 秒ごとに読みに行かないよう、全走査までは覚えておく。
+static uint8_t s_foreign[16];
+
+// CRC 不一致・失敗のときに読み直す回数
+#define READ_TRIES  3
+
+// <editor-fold defaultstate="collapsed" desc="小物">
+
+// CRC-16/CCITT-FALSE (多項式 0x1021、初期値 0xFFFF、反転なし)。子機と同じ。
+static uint16_t crc16(const uint8_t* data, uint16_t len)
+{
+    uint16_t crc = 0xFFFF;
+    for (uint16_t i = 0; i < len; i++) {
+        crc ^= (uint16_t)data[i] << 8;
+        for (uint8_t b = 0; b < 8; b++) {
+            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
+        }
+    }
+    return crc;
+}
+
+// 末尾 2 B (LE) が先頭からの CRC と一致するか
+static bool crc_ok(const uint8_t* block, uint16_t len)
+{
+    uint16_t stored = (uint16_t)block[len - 2] | ((uint16_t)block[len - 1] << 8);
+    return crc16(block, len - 2) == stored;
+}
+
+static inline uint16_t get_u16(const uint8_t* p)
+{
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+// 番地 reg から len バイト読む (16bit 番地は上位バイトから送る)
+static bool read_reg(uint8_t addr, uint16_t reg, uint8_t* buf, uint16_t len)
+{
+    const uint8_t a[2] = { (uint8_t)(reg >> 8), (uint8_t)reg };
+    return I2C_WriteRead(addr, a, 2, buf, len);
+}
+
+// CRC 込みの区画を読み、一致するまで読み直す
+static bool read_checked(uint8_t addr, uint16_t reg, uint8_t* buf, uint16_t len)
+{
+    for (uint8_t t = 0; t < READ_TRIES; t++) {
+        if (read_reg(addr, reg, buf, len) && crc_ok(buf, len)) return true;
+    }
+    return false;
+}
+
+static inline bool is_foreign(uint8_t addr) { return (s_foreign[addr >> 3] >> (addr & 7)) & 1; }
+static inline void set_foreign(uint8_t addr) { s_foreign[addr >> 3] |= (uint8_t)(1 << (addr & 7)); }
+
+// device_id (16 B) を FNV-1a で 22bit に畳み込む。v1 の子機が SIGROW.SERNUM から作って
+// いた値と同じ計算なので、AVR の子機は v1 と同じ ID になる (PoEMServer の登録が続く)。
+static uint32_t fold_id(const uint8_t* uid)
+{
+    uint32_t h = fnv1a_32(uid, 16);
+    h = (h ^ (h >> 22)) & 0x3FFFFFUL;
+    if (h == 0x3FFFFFUL) h = 0x3FFFFEUL;
+    return h;
+}
+
+// </editor-fold>
+
+// <editor-fold defaultstate="collapsed" desc="走査">
+
 void NM_init(void)
 {
     NM_NodeCount = 0;
     memset(NM_Nodes, 0, sizeof(NM_Nodes));
+    memset(s_foreign, 0, sizeof(s_foreign));
 }
 
-// 指定した I²C アドレスの子機から共通領域の固定情報 (INFO BLOCK 0x00~0x27) を読み取り、
-// node に格納する。検出と同時に呼ばれる前提で、status/value はゼロ初期化のまま、
-// seq は SEQ_INITIAL に設定する。
-static bool readInfoBlock(uint8_t i2c_addr, slave_node_t* node)
+// 1 つのアドレスを調べ、OSL v2 子機なら node を埋めて true を返す。
+//
+// まず番地を送らずに 32 B 読む (子機は 0x0000 の識別区画から返す)。この段階では
+// 書き込みを一切しないので、同じバスの他の I2C 機器を書き換えない (仕様 §7.1)。
+// "OSL" と CRC が確かめられた相手にだけ、番地を指定した読み出しを行う。
+// 応答はあったが OSL 子機でなかったアドレスは s_foreign に記録する。
+static bool probe_node(uint8_t addr, slave_node_t* node)
 {
-    uint8_t reg = INFO_BLOCK_OFFSET;
-    uint8_t buf[INFO_BLOCK_LEN];
+    uint8_t id[IDENT_LEN];
+    bool responded = false;
+    bool valid     = false;
 
-    if (!I2C_WriteRead(i2c_addr, &reg, 1, buf, INFO_BLOCK_LEN)) return false;
-
-    node->i2c_addr = i2c_addr;
-
-    // 0x00~0x03: Device ID (uint32 LE)
-    node->device_id =  ((uint32_t)buf[0])
-                    | (((uint32_t)buf[1]) << 8)
-                    | (((uint32_t)buf[2]) << 16)
-                    | (((uint32_t)buf[3]) << 24);
-
-    // 0x06: Data Count
-    uint8_t cnt = buf[REG_DATA_COUNT - INFO_BLOCK_OFFSET];
-    if (cnt > NODE_MAX_VALUES) cnt = NODE_MAX_VALUES;
-    node->data_count = cnt;
-
-    // 0x08~0x17: Unit Type[8] (uint16 LE × 8)
-    for (uint8_t i = 0; i < NODE_MAX_VALUES; i++) {
-        uint8_t off = (REG_UNIT_TYPE - INFO_BLOCK_OFFSET) + i * 2;
-        node->unit_type[i] = ((uint16_t)buf[off]) | (((uint16_t)buf[off + 1]) << 8);
-    }
-
-    // 0x18~0x27: Name (char[16], NUL 終端)
-    memcpy(node->name, &buf[REG_NAME - INFO_BLOCK_OFFSET], NODE_NAME_LEN);
-    node->name[NODE_NAME_LEN - 1] = '\0';
-    // EEPROM 未初期化 (0xFF) を空文字扱いにする
-    if ((unsigned char)node->name[0] == 0xFF) node->name[0] = '\0';
-
-    // 計測関連は未取得状態で初期化
-    node->status1    = 0;
-    node->status2    = 0;
-    node->seq        = SEQ_INITIAL;
-    node->meas_count = 0;
-    node->err_count  = 0;
-    memset(node->value, 0, sizeof(node->value));
-
-    return true;
-}
-
-bool NM_writeName(slave_node_t* node, const char* new_name)
-{
-    uint8_t payload[1 + NODE_NAME_LEN];
-    payload[0] = REG_NAME;
-    memset(&payload[1], 0, NODE_NAME_LEN);
-    strncpy((char*)&payload[1], new_name, NODE_NAME_LEN - 1);
-
-    if (!I2C_Write(node->i2c_addr, payload, sizeof(payload))) return false;
-
-    // ローカル cache を同期
-    memcpy(node->name, &payload[1], NODE_NAME_LEN);
-    return true;
-}
-
-bool NM_writeAddress(slave_node_t* node, uint8_t new_addr)
-{
-    if (new_addr < I2C_ADDR_SCAN_FIRST || new_addr > I2C_ADDR_SCAN_LAST) return false;
-    if (new_addr == node->i2c_addr) return true;  // 変更なしは成功扱い
-
-    // [REG_ADDR_KEY] -> ADDR_KEY_UNLOCK (鍵)、続けて [REG_NEW_ADDR] -> new_addr。
-    // 子機の reg_pointer は最初の 1byte (REG_ADDR_KEY=0x04) を起点に自動インクリメントする。
-    // STOP 受信で子機が EEPROM 永続化 + SADDR 即時反映を行うので、これ以降は new_addr で応答する。
-    uint8_t payload[3] = { REG_ADDR_KEY, ADDR_KEY_UNLOCK, new_addr };
-    if (!I2C_Write(node->i2c_addr, payload, sizeof(payload))) return false;
-
-    node->i2c_addr = new_addr;
-    return true;
-}
-
-// I²C 多分岐で配線容量が大きいとき、まれに NACK 取りこぼしや読み出しビット化けが
-// 起きる。スキャンは検出漏れが致命的 (子機が完全に「居ない」扱いになる) なので、
-// アドレスチェックと情報読出のそれぞれを 3 回までリトライする。
-#define SCAN_RETRY_MAX  3
-
-// 試験用のダミー子機数。実子機が揃っていなくても Web UI (デバイス一覧のページング等) を
-// 確認できるよう、スキャン後にリストへ架空の子機を追加する。実運用ビルドでは 0 にすること。
-#define NM_DUMMY_NODE_COUNT 0
-
-#if NM_DUMMY_NODE_COUNT > 0
-// 実子機と衝突しない I²C アドレスを走査上限 (0x77) 側から割り当ててダミーを追加する。
-// 実在しないため計測値は全て stale (status1=0xFF) とし、名前/アドレスの書き込みは
-// I²C 応答がなく失敗するだけで実害はない。
-static void appendDummyNodes(void)
-{
-    uint8_t addr = I2C_ADDR_SCAN_LAST;
-    for (uint8_t i = 0; i < NM_DUMMY_NODE_COUNT && NM_NodeCount < MAX_NODES; i++) {
-        // 実子機・追加済みダミーと重複しないアドレスまで下る
-        while (addr >= I2C_ADDR_SCAN_FIRST) {
-            bool used = false;
-            for (uint8_t j = 0; j < NM_NodeCount; j++) {
-                if (NM_Nodes[j].i2c_addr == addr) { used = true; break; }
-            }
-            if (!used) break;
-            addr--;
+    for (uint8_t t = 0; t < READ_TRIES && !valid; t++) {
+        if (!I2C_Read(addr, id, IDENT_LEN)) {
+            if (!responded) return false;       // 最初からアドレスに応答なし (NACK)
+            continue;
         }
-        if (addr < I2C_ADDR_SCAN_FIRST) return;  // 空きアドレスなし
-
-        slave_node_t* nd = &NM_Nodes[NM_NodeCount];
-        memset(nd, 0, sizeof(*nd));
-        nd->i2c_addr   = addr--;
-        nd->device_id  = 900001UL + i;
-        nd->data_count = 2;
-        nd->status1    = STATUS1_ALL_STALE;
-        nd->seq        = SEQ_INITIAL;
-        snprintf(nd->name, NODE_NAME_LEN, "DUMMY%02u", (unsigned)(i + 1));
-        NM_NodeCount++;
+        responded = true;
+        valid = (memcmp(id, "OSL", 3) == 0 && crc_ok(id, IDENT_LEN));
     }
+    if (!valid) {
+        // 応答はあるのに一度も "OSL" と CRC が揃わなかった → OSL 子機ではない
+        set_foreign(addr);
+        return false;
+    }
+
+    uint8_t n = id[11];
+    if (n == 0 || n > NODE_MAX_VALUES) { set_foreign(addr); return false; }
+
+    // チャネルの型 (整数型を float に直すため)
+    uint8_t ch[16 * NODE_MAX_VALUES + 2];
+    if (!read_checked(addr, REG_CHDESC, ch, 16 * n + 2)) return false;
+
+    // 拡張識別 (拡張ステータスを読めるか)。未実装なら CRC 込みですべて 0。
+    uint8_t ext[EXT_IDENT_LEN];
+    bool has_ext = false;
+    if (read_reg(addr, REG_EXT_IDENT, ext, EXT_IDENT_LEN) && crc_ok(ext, EXT_IDENT_LEN)) {
+        has_ext = (get_u16(&ext[0]) & CAP_EXT_STATUS) != 0;
+    }
+
+    memset(node, 0, sizeof(*node));
+    node->i2c_addr       = addr;
+    node->device_id      = fold_id(&id[14]);
+    node->data_count     = n;
+    node->has_ext_status = has_ext;
+    for (uint8_t i = 0; i < n; i++) {
+        node->type_bits |= (uint32_t)(ch[16 * i + 2] & 0x03) << (2 * i);
+    }
+    node->stale_mask = 0xFFFF;      // まだ値を読んでいない
+    return true;
 }
-#endif
 
 uint8_t NM_scan(void)
 {
@@ -142,119 +147,147 @@ uint8_t NM_scan(void)
 
     NM_NodeCount = 0;
     memset(NM_Nodes, 0, sizeof(NM_Nodes));
+    memset(s_foreign, 0, sizeof(s_foreign));    // 全走査では記録も作り直す
 
     for (uint8_t addr = I2C_ADDR_SCAN_FIRST;
          addr <= I2C_ADDR_SCAN_LAST && NM_NodeCount < MAX_NODES;
          addr++)
     {
-        // アドレス応答チェック (リトライ付き)
-        bool found = false;
-        for (uint8_t attempt = 0; attempt < SCAN_RETRY_MAX; attempt++) {
-            if (I2C_IsConnected(addr)) { found = true; break; }
-        }
-        if (!found) continue;
-
-        // 固有情報の読み出し (リトライ付き)。失敗したアドレスは黙って捨てる。
-        for (uint8_t attempt = 0; attempt < SCAN_RETRY_MAX; attempt++) {
-            if (readInfoBlock(addr, &NM_Nodes[NM_NodeCount])) {
-                NM_NodeCount++;
-                break;
-            }
-        }
+        if (probe_node(addr, &NM_Nodes[NM_NodeCount])) NM_NodeCount++;
     }
-
-#if NM_DUMMY_NODE_COUNT > 0
-    appendDummyNodes();
-#endif
-
     return NM_NodeCount;
 }
 
-// 稼働中の増設検出用の増分スキャン: 既存リストに無いアドレスだけを走査して追加する。
-// NM_scan と違い既存ノードの状態 (seq 等) を保持する。戻り値は新規追加数。
-// リトライは行わない (周期的に呼ばれるため、次周期が実質のリトライになる)。
-// 注意: 応答が途絶えた既存ノードのアドレスに「別の新しい子機」を付けても、リスト上は
-// 旧個体のままになる。個体の入れ替えを反映するには SCAN ボタンで全走査すること。
 uint8_t NM_scanNewNodes(void)
 {
     if (NM_ScanCount < 0xFFFF) NM_ScanCount++;
 
     uint8_t added = 0;
-
     for (uint8_t addr = I2C_ADDR_SCAN_FIRST;
          addr <= I2C_ADDR_SCAN_LAST && NM_NodeCount < MAX_NODES;
          addr++)
     {
+        if (is_foreign(addr)) continue;
         bool known = false;
         for (uint8_t j = 0; j < NM_NodeCount; j++) {
             if (NM_Nodes[j].i2c_addr == addr) { known = true; break; }
         }
         if (known) continue;
 
-        if (!I2C_IsConnected(addr)) continue;
-
-        if (readInfoBlock(addr, &NM_Nodes[NM_NodeCount])) {
+        if (probe_node(addr, &NM_Nodes[NM_NodeCount])) {
             NM_NodeCount++;
             added++;
         }
     }
-
     return added;
 }
 
+// </editor-fold>
+
+// <editor-fold defaultstate="collapsed" desc="計測値・名前・アドレス・診断">
+
 bool NM_pollOne(slave_node_t* node)
 {
-    uint8_t reg = POLL_BLOCK_OFFSET;
-    uint8_t buf[POLL_BLOCK_LEN];
+    uint8_t n = node->data_count;
+    uint16_t len = (uint16_t)(2 + 5 * n + (n & 1) + 2);
+    uint8_t buf[2 + 5 * NODE_MAX_VALUES + 1 + 2];
 
-    if (!I2C_WriteRead(node->i2c_addr, &reg, 1, buf, POLL_BLOCK_LEN)) return false;
-
-    // 0x18: Status1
-    node->status1 = buf[REG_STATUS1 - POLL_BLOCK_OFFSET];
-    // 0x19: Status2
-    node->status2 = buf[REG_STATUS2 - POLL_BLOCK_OFFSET];
-
-    // 0x2A/0x2B: 子機の自己診断カウンタ。未対応の子機は 0 のまま。
-    node->meas_count = buf[REG_MEAS_COUNT - POLL_BLOCK_OFFSET];
-    node->err_count  = buf[REG_ERR_COUNT  - POLL_BLOCK_OFFSET];
-
-    // 0x1C~0x3B: float[8] LE — Status2==1 (子機が新値を準備済み) のときだけ取り込む。
-    // それ以外は前回値を保持し、新旧は seq (=sq) で表現する。
-    // ※ slave 側は ATOMIC_BLOCK で書き込んでいても、こちらの read は 1 バイトずつ
-    //   別 ISR に分かれるため、status2==0 のタイミングの float 領域はバイト裂け
-    //   (tearing) で 0 などに化ける可能性がある。これを取り込まないことで防ぐ。
-    // ※ status2 のバイト自体が化けて 1 に見えた場合、上のガードは抜けてしまう。
-    //   その場合 float 領域は任意のビットパターンになり、指数部が全 1 なら NaN/Inf になる。
-    //   NaN を value[] に入れると NM_buildDataJson が "nan" を出力し、JSON として不正なため
-    //   PoEMServer 側のデシリアライズがメッセージ全体で失敗する。さらに NaN は次の正常値が
-    //   来るまで value[] に残り続けるので、その子機は恒久的に更新が止まる。
-    //   そこで 1 要素ずつ検査し、有限値でなければ取り込まず前回値を維持して stale を立てる。
-    if (node->status2 == 1) {
-        // AVR は LE なので memcpy で OK
-        const uint8_t* src = &buf[REG_VALUE - POLL_BLOCK_OFFSET];
-        for (uint8_t i = 0; i < NODE_MAX_VALUES; i++) {
-            float v;
-            memcpy(&v, src + (uint16_t)i * sizeof(float), sizeof(float));
-            if (isfinite(v)) {
-                node->value[i] = v;
-            } else if (i < node->data_count) {
-                // stale ビットは有効長の範囲だけ立てる。範囲外まで立てると status1 が
-                // 0x00 にならず、PoEMServer 側の「最終正常データ受信日時」が更新されなくなる。
-                node->status1 |= (uint8_t)(1u << i);
-            }
-        }
+    // CRC を照合するので、v1 で起きていたバイト化けや NaN の混入はここで捨てられる。
+    // POLL は番地を指定した瞬間に子機が一括で写し取るので、値が裂けることもない。
+    if (!read_checked(node->i2c_addr, REG_POLL, buf, len)) {
+        node->comm_ok = false;
+        return false;
     }
 
+    node->comm_ok    = true;
+    node->sample_seq = get_u16(&buf[0]);
+    uint16_t stale = 0;
+    for (uint8_t i = 0; i < n; i++) {
+        const uint8_t* p = &buf[2 + 4 * i];
+        uint8_t type = (uint8_t)((node->type_bits >> (2 * i)) & 0x03);
+        float v;
+        if (type == VTYPE_INT32) {
+            int32_t x;  memcpy(&x, p, 4);  v = (float)x;
+        } else if (type == VTYPE_UINT32) {
+            uint32_t x; memcpy(&x, p, 4);  v = (float)x;
+        } else {
+            memcpy(&v, p, 4);           // AVR は LE なのでそのまま
+        }
+        // 状態が正常でないチャネルは値を更新せず、前回値のまま異常ビットを立てる
+        if (buf[2 + 4 * n + i] != 0 || !isfinite(v)) {
+            stale |= (uint16_t)(1u << i);
+        } else {
+            node->value[i] = v;
+        }
+    }
+    node->stale_mask = stale;
     return true;
 }
 
-bool NM_clearStatus2(slave_node_t* node)
+bool NM_readName(const slave_node_t* node, char* buf)
 {
-    uint8_t writeBuf[2] = { REG_STATUS2, 0 };
-    return I2C_Write(node->i2c_addr, writeBuf, sizeof(writeBuf));
+    uint8_t b[NAME_LEN + 2];
+    buf[0] = '\0';
+    if (!read_checked(node->i2c_addr, REG_NAME, b, sizeof(b))) return false;
+    memcpy(buf, b, NAME_LEN);
+    buf[NAME_LEN - 1] = '\0';
+    return true;
 }
 
-// MQTT トピック生成 ----------------------------------------------------------
+void NM_truncateUtf8(char* s, uint16_t max_bytes)
+{
+    uint16_t len = (uint16_t)strlen(s);
+    if (len <= max_bytes) return;
+    // 続きのバイト (10xxxxxx) で切らないよう、文字の先頭まで戻る
+    while (max_bytes > 0 && ((uint8_t)s[max_bytes] & 0xC0) == 0x80) max_bytes--;
+    s[max_bytes] = '\0';
+}
+
+bool NM_writeName(const slave_node_t* node, const char* new_name)
+{
+    uint8_t payload[2 + NAME_LEN];
+    payload[0] = (uint8_t)(REG_NAME >> 8);
+    payload[1] = (uint8_t)REG_NAME;
+    memset(&payload[2], 0, NAME_LEN);
+    strncpy((char*)&payload[2], new_name, NAME_LEN - 1);
+    NM_truncateUtf8((char*)&payload[2], NAME_LEN - 1);
+
+    // 64 B を 1 回の書き込みで送る (途中で STOP を挟むと名前が一旦切れて反映される)
+    return I2C_Write(node->i2c_addr, payload, sizeof(payload));
+}
+
+bool NM_writeAddress(slave_node_t* node, uint8_t new_addr)
+{
+    if (new_addr < I2C_ADDR_SCAN_FIRST || new_addr > I2C_ADDR_SCAN_LAST) return false;
+    if (new_addr == node->i2c_addr) return true;  // 変更なしは成功扱い
+
+    // 鍵と新アドレスを 1 回の書き込みで送る。子機は STOP で EEPROM に保存し、
+    // 即座に新アドレスへ切り替える (リセット不要)。
+    const uint8_t payload[4] = {
+        (uint8_t)(REG_ADDR_KEY >> 8), (uint8_t)REG_ADDR_KEY, ADDR_KEY_UNLOCK, new_addr
+    };
+    if (!I2C_Write(node->i2c_addr, payload, sizeof(payload))) return false;
+
+    node->i2c_addr = new_addr;
+    return true;
+}
+
+bool NM_readExtStatus(const slave_node_t* node, uint32_t* uptime_s, uint8_t* reset_cause,
+                      uint16_t* err_i2c, uint16_t* err_sensor)
+{
+    if (!node->has_ext_status) return false;
+    uint8_t b[EXT_STATUS_LEN];
+    if (!read_checked(node->i2c_addr, REG_EXT_STATUS, b, sizeof(b))) return false;
+    *uptime_s    = (uint32_t)get_u16(&b[0]) | ((uint32_t)get_u16(&b[2]) << 16);
+    *reset_cause = b[5];
+    *err_i2c     = get_u16(&b[6]);
+    *err_sensor  = get_u16(&b[8]);
+    return true;
+}
+
+// </editor-fold>
+
+// <editor-fold defaultstate="collapsed" desc="MQTT">
 
 void NM_buildConfigTopic(const slave_node_t* node, char* buf, uint16_t bufsize)
 {
@@ -266,21 +299,31 @@ void NM_buildDataTopic(const slave_node_t* node, char* buf, uint16_t bufsize)
     snprintf(buf, bufsize, "nodes/data/%lu", (unsigned long)node->device_id);
 }
 
-// JSON ビルダ -----------------------------------------------------------------
-
-// 浮動小数点を有効数字 6 桁に丸める。
-// NaN/Inf はそのまま返す (snprintf 側で "nan"/"inf" になる)。
+// 浮動小数点を有効数字 6 桁に丸める。NaN/Inf はそのまま返す。
 //
-// 以前は 4 桁だったが、絶対圧センサ (BMP585) の大気圧 101325 Pa が 101300 Pa に
-// なり、分解能が 100 Pa まで落ちる (センサの相対精度は ±6 Pa)。単位を hPa/kPa に
-// しても桁数は同じなので解決しない。6 桁なら 1e5 付近で 1 Pa 刻み。float の仮数は
-// 24 bit (約 7 桁) なので、x * factor が 999999.5 以下に収まるこの丸めは誤差なく動く。
+// 4 桁だと絶対圧センサ (BMP585) の大気圧 101325 Pa が 101300 Pa になり、分解能が
+// 100 Pa まで落ちる。6 桁なら 1e5 付近で 1 Pa 刻み。float の仮数は 24 bit (約 7 桁)
+// なので、x * factor が 999999.5 以下に収まるこの丸めは誤差なく動く。
 static float roundTo6Sigfig(float x)
 {
     if (!isfinite(x) || x == 0.0f) return x;
     float magnitude = floorf(log10f(fabsf(x)));
-    float factor    = powf(10.0f, 5 - magnitude); // 6 桁目で丸める
+    float factor    = powf(10.0f, 5 - magnitude);
     return roundf(x * factor) / factor;
+}
+
+// JSON の文字列として書き出す (" と \ と制御文字をエスケープ。UTF-8 はそのまま)
+static int json_str(char* p, char* end, const char* s)
+{
+    char* start = p;
+    for (; *s; s++) {
+        uint8_t c = (uint8_t)*s;
+        if (end - p < 7) return -1;
+        if (c == '"' || c == '\\') { *p++ = '\\'; *p++ = (char)c; }
+        else if (c < 0x20)         { p += snprintf(p, end - p, "\\u%04x", c); }
+        else                       { *p++ = (char)c; }
+    }
+    return (int)(p - start);
 }
 
 uint16_t NM_buildConfigJson(const slave_node_t* node, char* buf, uint16_t bufsize)
@@ -290,17 +333,28 @@ uint16_t NM_buildConfigJson(const slave_node_t* node, char* buf, uint16_t bufsiz
     char* end = buf + bufsize;
     int   n;
 
+    // 名前とチャネル記述は保持していないので、ここで子機から読む
+    char name[NAME_LEN];
+    NM_readName(node, name);                        // 読めなければ空文字
+    uint8_t cnt = node->data_count;
+    uint8_t ch[16 * NODE_MAX_VALUES + 2];
+    if (!read_checked(node->i2c_addr, REG_CHDESC, ch, 16 * cnt + 2)) return 0;
+    if (cnt > MQTT_MAX_VALUES) cnt = MQTT_MAX_VALUES;
+
     // adr (I²Cアドレス) は PoEMServer 側で BACnet インスタンス番号の基数 (adr×100) に使う
-    n = snprintf(p, end - p, "{\"id\":%lu,\"adr\":%u,\"name\":\"%s\",\"cnt\":%u,\"u\":[",
-                 (unsigned long)node->device_id, (unsigned)node->i2c_addr,
-                 node->name, (unsigned)node->data_count);
+    n = snprintf(p, end - p, "{\"id\":%lu,\"adr\":%u,\"name\":\"",
+                 (unsigned long)node->device_id, (unsigned)node->i2c_addr);
+    if (n < 0 || n >= end - p) return 0;
+    p += n;
+    n = json_str(p, end, name);
+    if (n < 0) return 0;
+    p += n;
+    n = snprintf(p, end - p, "\",\"cnt\":%u,\"u\":[", (unsigned)cnt);
     if (n < 0 || n >= end - p) return 0;
     p += n;
 
-    for (uint8_t i = 0; i < node->data_count; i++) {
-        n = snprintf(p, end - p, "%s%u",
-                     (i == 0 ? "" : ","),
-                     (unsigned)node->unit_type[i]);
+    for (uint8_t i = 0; i < cnt; i++) {
+        n = snprintf(p, end - p, "%s%u", (i == 0 ? "" : ","), (unsigned)get_u16(&ch[16 * i]));
         if (n < 0 || n >= end - p) return 0;
         p += n;
     }
@@ -308,7 +362,6 @@ uint16_t NM_buildConfigJson(const slave_node_t* node, char* buf, uint16_t bufsiz
     n = snprintf(p, end - p, "]}");
     if (n < 0 || n >= end - p) return 0;
     p += n;
-
     return (uint16_t)(p - buf);
 }
 
@@ -319,24 +372,22 @@ uint16_t NM_buildDataJson(const slave_node_t* node, char* buf, uint16_t bufsize)
     char* end = buf + bufsize;
     int   n;
 
-    // sq は子機が数えた計測回数 (0x2A) をそのまま載せる。親機管理の seq は
-    // 「親機が新値を観測した回数」なので、子機が黙って再起動していても止まらない。
-    // 子機自身のカウンタなら、進み方が崩れればその個体が落ちたと一目で分かる。
-    // 歩幅は機種で違う (温湿度 8/秒、風速 5/秒)。0x2A 未対応の子機は 0 のまま。
+    uint8_t cnt = node->data_count;
+    if (cnt > MQTT_MAX_VALUES) cnt = MQTT_MAX_VALUES;
+
+    // st: 読めなかったときは 0xFF、それ以外はチャネルごとの異常ビット (8 チャネルぶん)
+    // sq: sample_seq の下位 8bit。進み方が崩れれば、その子機が止まった・再起動したと分かる。
+    unsigned st = node->comm_ok ? (unsigned)(node->stale_mask & 0xFF) : STATUS1_ALL_STALE;
     n = snprintf(p, end - p, "{\"id\":%lu,\"st\":%u,\"sq\":%u,\"v\":[",
-                 (unsigned long)node->device_id,
-                 (unsigned)node->status1,
-                 (unsigned)node->meas_count);
+                 (unsigned long)node->device_id, st, (unsigned)(node->sample_seq & 0xFF));
     if (n < 0 || n >= end - p) return 0;
     p += n;
 
-    for (uint8_t i = 0; i < node->data_count; i++) {
-        float v = roundTo6Sigfig(node->value[i]);
-        // %g は不要なゼロを省略する。最長でも "-1.23457e-05" の 12 文字 × 8 個に
-        // 収まるので、呼び出し側の payload[256] で足りる。
-        n = snprintf(p, end - p, "%s%.6g",
-                     (i == 0 ? "" : ","),
-                     (double)v);
+    for (uint8_t i = 0; i < cnt; i++) {
+        // 値は CRC を通ったものだけを取り込んでいるが、念のため有限でなければ 0 を送る
+        // (NaN を出すと JSON として不正になり、PoEMServer がメッセージ全体を捨てる)
+        float v = isfinite(node->value[i]) ? roundTo6Sigfig(node->value[i]) : 0.0f;
+        n = snprintf(p, end - p, "%s%.6g", (i == 0 ? "" : ","), (double)v);
         if (n < 0 || n >= end - p) return 0;
         p += n;
     }
@@ -344,6 +395,7 @@ uint16_t NM_buildDataJson(const slave_node_t* node, char* buf, uint16_t bufsize)
     n = snprintf(p, end - p, "]}");
     if (n < 0 || n >= end - p) return 0;
     p += n;
-
     return (uint16_t)(p - buf);
 }
+
+// </editor-fold>

@@ -220,7 +220,24 @@ uint8_t * get_http_param_value(char* uri, const char* param_name)
 	uri[content_len] = 0;
 	/***************/
 
-	if((name = (uint8_t *)strstr(uri, param_name)))
+	// 引数名は「本文の先頭か & の直後」にあり、直後が = のものだけを採る。
+	// 単純な strstr だと、別の引数の値の中 (例: 名前 "data001" の中の "a00") や、
+	// 長い引数名の一部 ("n1" と "n10") に誤って一致する。
+	{
+		size_t plen = strlen(param_name);
+		char* q = uri;
+		name = 0;
+		while((q = strstr(q, param_name)))
+		{
+			if((q == uri || q[-1] == '&') && q[plen] == '=')
+			{
+				name = (uint8_t *)q;
+				break;
+			}
+			q += plen;
+		}
+	}
+	if(name)
 	{
 		name += strlen(param_name) + 1;
 		pos2 = (uint8_t*)strstr((char*)name, "&");
@@ -229,13 +246,17 @@ uint8_t * get_http_param_value(char* uri, const char* param_name)
 			pos2 = name + strlen((char*)name);
 		}
 		len = pos2 - name;
+		// 受け取りバッファ (BUFPUB) を越えないよう切り詰める
+		if(len > sizeof(BUFPUB) - 1) len = sizeof(BUFPUB) - 1;
 
 		if(len)
 		{
 			ret[len] = 0;
 			strncpy((char*)ret,(char*)name, len);
-			unescape_http_url((char *)ret);
+			// + を空白に戻してから %XX を復号する。逆順だと、入力された + (%2B) まで
+			// 空白に化ける。
 			replacetochar(ret, '+' ,' ');
+			unescape_http_url((char *)ret);
 			//ret[len] = 0;
 			//ret[strlen((int8*)ret)] = 0;
 			//printf("len=%d\r\n",len);

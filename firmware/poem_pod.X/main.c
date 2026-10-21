@@ -22,8 +22,6 @@
 #include "W5500/MQTTClient.h" //MQTT通信
 #include "W5500/httpServer.h" //HTTPサーバー
 
-#define HTTP_BUF_SIZE (2048)
-
 // SCAN ボタンのデバウンス用閾値 (ms)。連続して押下を検知するための最小間隔。
 #define SCAN_DEBOUNCE_MS        50
 
@@ -202,10 +200,11 @@ static bool scanButtonPressed(void)
 }
 
 // 1 子機分の config トピックを publish する。
+// 名前 (UTF-8 63 B、エスケープで最大約 2 倍) とチャネルの単位が入るので 320 B 確保する。
 static void publishConfigOne(slave_node_t* node)
 {
     char    topic[24];
-    uint8_t payload[256];
+    uint8_t payload[320];
 
     NM_buildConfigTopic(node, topic, sizeof(topic));
     uint16_t len = NM_buildConfigJson(node, (char*)payload, sizeof(payload));
@@ -267,65 +266,56 @@ static void handleScanRequest(void)
     blinkGreenLED(2);
 }
 
-// 1 ノードを poll → JSON 生成 → publish。Status2==1 なら seq +1 して 0 を書き戻す。
-// I²C 失敗時は status1 を STATUS1_ALL_STALE (0xFF) で上書きし、value は前回値のまま publish する。
-// 子機の I2C 異常カウンタ (0x2B) を publish する。
+// 子機の拡張ステータス (稼働時間・起動要因・異常回数) を読み、変化があれば publish する。
 //
 // I2C は 2 本を全員で共有しているので、1 台が SCL を解放しないとバス上の全ノードが止まる。
 // 症状は全台同じに見えて親機からは区別できないため、子機自身に数えさせてここで運ぶ。
-// 値が変わったときだけ出すので、平常時はまったく流れない。
-//
-// 0x2A (計測回数) はここには載せない。毎秒 5〜8 ずつ動く値なので、変化を条件に
-// すると全ノードが毎秒 publish することになる。こちらは nodes/data の sq で見る。
+// 変化したとき (異常回数が増えた、稼働時間が巻き戻った = 再起動した) だけ出すので、
+// 平常時はまったく流れない。拡張ステータスを実装していない子機は何もしない。
 //
 // トピックはサーバにとって未知なのでログに出るだけで、判定処理には影響しない。
-static void publishNodeDiag(const slave_node_t* node)
+static void checkNodeDiag(slave_node_t* node)
 {
-    char    topic[24];
-    uint8_t payload[64];
+    uint32_t up;
+    uint8_t  rc;
+    uint16_t ei, es;
+    if (!NM_readExtStatus(node, &up, &rc, &ei, &es)) return;
 
+    bool rebooted = (up < node->uptime_s);
+    bool changed  = rebooted || ei != node->err_i2c || es != node->err_sensor;
+    bool first    = (node->uptime_s == 0 && node->err_i2c == 0 && node->err_sensor == 0);
+    node->uptime_s   = up;
+    node->err_i2c    = ei;
+    node->err_sensor = es;
+    if (!changed || first) return;
+
+    char    topic[24];
+    uint8_t payload[96];
     int tlen = snprintf(topic, sizeof(topic), "nodes/diag/%lu", (unsigned long)node->device_id);
     if (tlen <= 0 || (size_t)tlen >= sizeof(topic)) return;
 
     int len = snprintf((char*)payload, sizeof(payload),
-                       "{\"id\":%lu,\"err\":%u}",
-                       (unsigned long)node->device_id,
-                       (unsigned)node->err_count);
+                       "{\"id\":%lu,\"err\":%u,\"serr\":%u,\"up\":%lu,\"rc\":%u}",
+                       (unsigned long)node->device_id, (unsigned)ei, (unsigned)es,
+                       (unsigned long)up, (unsigned)rc);
     if (len <= 0 || (size_t)len >= sizeof(payload)) return;
 
     MA_publish(topic, payload, (uint16_t)len);
+    wdt_reset();
 }
 
+// 1 ノードを poll → JSON 生成 → publish。
+// 読めなかったとき (I2C 失敗、CRC 不一致) は st = 0xFF とし、値は前回値のまま publish する
+// (リストからは外さず、生存確認のため publish を続ける)。
 static void pollAndPublishOne(slave_node_t* node)
 {
     char    topic[24];
     uint8_t payload[256];
 
-    // 自己診断カウンタの増加を検出するため、読む前の値を控える。
-    uint8_t prev_err = node->err_count;
-
-    if (NM_pollOne(node)) {
-        // 通信成功: status1 は NM_pollOne が子機から読み出した値で上書き済み
-
-        // 新値を観測したらシーケンス番号を進めてハンドシェイク
-        if (node->status2 == 1) {
-            node->seq = (node->seq == SEQ_INITIAL) ? 0 : (uint8_t)((node->seq + 1) % 255);
-            NM_clearStatus2(node);
-        }
-
-        // 自己診断カウンタが動いたら知らせる。平常時はまったく流れない。
-        if (node->err_count != prev_err) {
-            publishNodeDiag(node);
-        }
-    } else {
-        // 通信失敗: 全計測値が信頼できないことを示す。リストからは外さない (生存確認のため publish 継続)
-        //
-        // NM_pollOne() は I2C_WriteRead() が失敗した時点で戻るので、status1 はまだ
-        // 前回の値を持っている。読めなくなった瞬間だけを数えられる。
-        if (node->status1 != STATUS1_ALL_STALE) {
-            I2C_CountNodeLost();
-        }
-        node->status1 = STATUS1_ALL_STALE;
+    bool was_ok = node->comm_ok;
+    if (!NM_pollOne(node)) {
+        // 読めなくなった瞬間だけ数える (毎周期数えると、抜いている時間の長さが件数になる)
+        if (was_ok) I2C_CountNodeLost();
     }
 
     NM_buildDataTopic(node, topic, sizeof(topic));
@@ -374,13 +364,10 @@ static void runHttpServerMode(void)
 {
     uint8_t http_socklist[] = {1};
 
-    // HTTP バッファはこのモード中のみスタックに確保 (運用モードでは使わない)
-    static uint8_t http_tx_buf[HTTP_BUF_SIZE];
-    static uint8_t http_rx_buf[HTTP_BUF_SIZE];
-
     NM_init();   // /scan.cgi で書き込めるように初期化
 
-    httpServer_init(http_tx_buf, http_rx_buf, 1, http_socklist);
+    // 送受信バッファは MQTT 通信モードと共用する (このモードの間は MQTT を動かさない)
+    httpServer_init(g_io_tx_buf, g_io_rx_buf, 1, http_socklist);
     reg_httpServer_webContent((uint8_t *)"index.html", (uint8_t *)index_page_content);
 
     turnOnRedLED();    // 設定モード中は赤 LED 常時点灯
@@ -479,6 +466,12 @@ static void runMqttClientMode(void)
                     publishConfigOne(&NM_Nodes[i]);
                 }
                 if (added > 0) blinkGreenLED(2);   // 増設検出の通知
+
+                // 子機の拡張ステータスも同じ周期で確かめる (再起動・異常回数の変化)
+                for (uint8_t i = 0; i < NM_NodeCount; i++) {
+                    checkNodeDiag(&NM_Nodes[i]);
+                    wdt_reset();
+                }
             }
         }
     }

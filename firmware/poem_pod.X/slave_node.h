@@ -2,8 +2,12 @@
  * File:   slave_node.h
  * Author: e.togashi
  *
- * 子機を表す構造体と関連定数の定義。
- * 共通レジスタマップ (SHASE 2026 第2報, 表1) に対応する。
+ * 子機を表す構造体と関連定数の定義。OSL 共通レジスタ v2 に対応する
+ * (仕様は「OSL共通レジスタv2_アドレス表.md」)。
+ *
+ * 親機は子機ごとに「毎周期の publish に要るもの」だけを RAM に持つ。名前 (64 B) と
+ * チャネル記述 (最大 258 B) は持たず、config を送るときや Web 画面で子機から読み直す
+ * (64 台ぶん持つと数 KB になり、SRAM 16 KB に対して重いため)。
  */
 
 #ifndef SLAVE_NODE_H
@@ -14,74 +18,64 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include <stdbool.h>
 
-// 親機が同時に管理できる子機の上限。
-// 64 ノード × ~60 byte = ~3.8 KB。実測で縮減する可能性あり。
+// 親機が同時に管理できる子機の上限
 #define MAX_NODES               64
 
-// 1 子機あたりの計測値最大数 (共通領域の制約)
-#define NODE_MAX_VALUES         8
+// 1 子機あたりの計測値 (チャネル) の最大数 (仕様 §3.2)
+#define NODE_MAX_VALUES         16
+
+// MQTT (現行の形式) で送るチャネル数の上限。PoEMServer が 8 個までしか扱わないため。
+// MQTT とサーバを v2 にするときに NODE_MAX_VALUES へ揃える。
+#define MQTT_MAX_VALUES         8
 
 // I²C アドレスの走査範囲 (7bit、予約域を除いた一般デバイス領域)
 #define I2C_ADDR_SCAN_FIRST     0x08
 #define I2C_ADDR_SCAN_LAST      0x77
 
-// 共通レジスタアドレス
-//
-// 静的情報 (INFO BLOCK, 走査時に 1 回読む) と動的情報 (POLL BLOCK, 毎周期読む) を
-// 連続領域に分離。Reserved はアラインメント (uint16 / float の偶/4byte 境界) 用。
-#define REG_DEVICE_ID           0x00    // uint32 R    : FNV-1a(SIGROW.SERNUM)
-#define REG_ADDR_KEY            0x04    // uint8  W    : アドレス変更鍵
-#define REG_NEW_ADDR            0x05    // uint8  R/W  : 新 I2C アドレス
-#define ADDR_KEY_UNLOCK         0xA5    // REG_ADDR_KEY に書き込むとアドレス変更解錠 (STOP で自動クリア)
-#define REG_DATA_COUNT          0x06    // uint8  R    : 有効計測値数
-                                         // 0x07         : reserved (uint16 整列用)
-#define REG_UNIT_TYPE           0x08    // uint16[8] R : BACnet 単位コード (LE)
-#define REG_NAME                0x18    // char[16] R/W: 装置ラベル (NUL 終端、EEPROM 永続)
-#define REG_STATUS1             0x28    // uint8  R    : 異常フラグ bitmask
-#define REG_STATUS2             0x29    // uint8  R/W  : 0=未了, 1=更新完了
-// 0x2A-0x2B は元は予約 (float 整列用) だった 2 バイト。POLL BLOCK の内側にあり毎周期
-// 読んで捨てていたので、通信を増やさずに子機の自己診断を運ぶために割り当てた。
-// 未対応の子機は 0 のままなので、混在しても誤検出しない。
-#define REG_MEAS_COUNT          0x2A    // uint8  R    : 子機が数えた計測回数 (255 の次は 0)
-#define REG_ERR_COUNT           0x2B    // uint8  R    : 子機が検出した I2C 異常回数
-#define REG_VALUE               0x2C    // float[8] R  : 計測値 (LE)
-#define REG_EXTENSION           0x4C    // 各子機固有 (親機は触らない)
+// ===== 共通レジスタ v2 の番地 (16bit、上位バイトから送る) ===================
+#define REG_IDENT               0x0000  // 識別 32 B (CRC 込み)
+#define REG_ADDR_KEY            0x0020  // アドレス変更の鍵 + 新アドレス
+#define REG_NAME                0x0040  // 名前 64 B + CRC 2 B
+#define REG_CHDESC              0x0100  // チャネル記述 16 B × N + CRC
+#define REG_POLL                0x0300  // POLL (sample_seq, value[N], status[N], CRC)
+#define REG_EXT_IDENT           0x0400  // 拡張識別 8 B + CRC
+#define REG_EXT_STATUS          0x0480  // 拡張ステータス 10 B + CRC
 
-// ステータス→バリュー部の一括読み取り長 (0x28~0x4B = 36 byte)
-#define POLL_BLOCK_OFFSET       REG_STATUS1
-#define POLL_BLOCK_LEN          36
+#define IDENT_LEN               32
+#define NAME_LEN                64      // UTF-8、NUL 終端 (本文は 63 B まで)
+#define EXT_IDENT_LEN           10
+#define EXT_STATUS_LEN          12
+#define ADDR_KEY_UNLOCK         0xA5
 
-// 共通領域の固定情報 (DeviceID～UnitType + Name) = 0x00~0x27 = 40 byte
-#define INFO_BLOCK_OFFSET       REG_DEVICE_ID
-#define INFO_BLOCK_LEN          40
+// capability (拡張識別)
+#define CAP_EXT_STATUS          0x0002
 
-// シーケンス番号の特殊値: 親機がまだ一度も新値を観測していないことを示す
-#define SEQ_INITIAL             255
+// value_type (チャネル記述)
+#define VTYPE_FLOAT32           0
+#define VTYPE_INT32             1
+#define VTYPE_UINT32            2
 
-// Status1 のビット規約 (per-value bitmask):
-//   bit i (i < data_count) = value[i] が stale / 異常 (1=信頼できない)
-//   全計測値が信頼できないときは 0xFF を立てる慣例
-//   親機が子機を読めなかった場合も 0xFF として publish する
+// 親機が子機を読めなかったときに MQTT の st に入れる値 (現行の形式との互換)
 #define STATUS1_ALL_STALE       0xFF
 
-// 子機名フィールドの長さ (15 文字 + NUL)。共通レジスタ仕様 (REG_NAME = 0x18) に
-// 16 byte 確保。子機側 EEPROM に永続化される。
-#define NODE_NAME_LEN           16
-
-// 親機側 RAM に保持する子機状態
+// 親機側 RAM に保持する子機の状態
 typedef struct {
-    uint8_t  i2c_addr;                          // 7bit
-    uint32_t device_id;                         // FNV-1a 22-bit (BACnet Object Instance, 0..0x3FFFFE)
-    uint8_t  data_count;                        // 有効な計測値の個数 (≤ NODE_MAX_VALUES)
-    uint16_t unit_type[NODE_MAX_VALUES];        // BACnet Engineering Units
-    uint8_t  status1;                           // 直近に読んだ Status1 (異常 bitmask)
-    uint8_t  status2;                           // 直近に読んだ Status2 (0/1)
-    uint8_t  meas_count;                        // 直近に読んだ 0x2A (子機が数えた計測回数)
-    uint8_t  err_count;                         // 直近に読んだ 0x2B (子機の I2C 異常回数)
-    uint8_t  seq;                               // 親機管理シーケンス番号 (0~254、255=未計測)
-    float    value[NODE_MAX_VALUES];            // 直近の計測値
-    char     name[NODE_NAME_LEN];               // Web 設定画面の表示用ラベル (5文字 + NUL)
+    uint8_t  i2c_addr;                  // 7bit
+    uint32_t device_id;                 // 16 B の device_id を FNV-1a で 22bit に畳み込んだ値 (MQTT 用)
+    uint8_t  data_count;                // チャネル数 (≤ NODE_MAX_VALUES)
+    bool     has_ext_status;            // 拡張ステータスを実装している
+    uint32_t type_bits;                 // チャネルごとの value_type (2bit × 16)
+    uint16_t stale_mask;                // bit i = チャネル i が正常でない (status ≠ 0、または読めない)
+    uint16_t sample_seq;                // 直近に読んだ sample_seq
+    bool     comm_ok;                   // 直近の POLL を読めた
+    float    value[NODE_MAX_VALUES];    // 直近の計測値 (整数型も float に直して持つ)
+
+    // 診断の変化検出用 (拡張ステータス)
+    uint16_t err_i2c;
+    uint16_t err_sensor;
+    uint32_t uptime_s;
 } slave_node_t;
 
 
