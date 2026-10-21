@@ -2,7 +2,7 @@
  * File:   sdp8xx.h
  * Author: e.togashi
  *
- * Sensirion SDP8xx-Digital (SDP810-125Pa) 差圧センサのドライバ。
+ * Sensirion SDP8xx-Digital (SDP810-125Pa / SDP810-500Pa) 差圧センサのドライバ。
  * 連続測定モード (差圧温度補償・average till read) で動かし、結果を読むだけにする。
  */
 
@@ -26,6 +26,10 @@ bool SDP8xx_Initialize(void);
 // 最新の差圧 [Pa] と温度 [°C] を読む。CRC 不一致や NACK で false。
 // 差圧の換算係数はセンサが返す値を使う (125Pa 品は 240、500Pa 品は 60)。
 bool SDP8xx_ReadValue(float *dpValue, float *tempValue);
+
+// 直近に読めた差圧の換算係数。125Pa 品は 240、500Pa 品は 60。まだ読めていなければ 0。
+// 品種を判別するために使う (換算そのものは SDP8xx_ReadValue が済ませている)。
+uint16_t SDP8xx_LastScaleFactor(void);
 
 #ifdef	__cplusplus
 }

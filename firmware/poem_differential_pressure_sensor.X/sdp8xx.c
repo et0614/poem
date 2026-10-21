@@ -12,6 +12,9 @@
 // 温度の換算係数 [1/°C] (データシート 6.5.1、全機種共通)
 #define TEMP_SCALE_FACTOR       (200.0f)
 
+// 直近に読めた差圧の換算係数 (0 = まだ読めていない)。機種の判別に使う。
+static uint16_t s_last_sf = 0;
+
 static bool sendCommand(uint16_t cmd)
 {
     const uint8_t buf[2] = { (uint8_t)(cmd >> 8), (uint8_t)cmd };
@@ -53,8 +56,14 @@ bool SDP8xx_ReadValue(float *dpValue, float *tempValue)
     int16_t  raw_t  = (int16_t)(((uint16_t)buffer[3] << 8) | buffer[4]);
     uint16_t sf     = ((uint16_t)buffer[6] << 8) | buffer[7];
     if (sf == 0) return false;
+    s_last_sf = sf;
 
     *dpValue   = (float)raw_dp / (float)sf;
     *tempValue = (float)raw_t / TEMP_SCALE_FACTOR;
     return true;
+}
+
+uint16_t SDP8xx_LastScaleFactor(void)
+{
+    return s_last_sf;
 }
