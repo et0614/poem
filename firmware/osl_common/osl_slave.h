@@ -113,6 +113,10 @@ typedef struct {
     // 識別コマンドを受けたときに呼ばれる (割り込みの外、OSL_Task から)。
     // seconds = 0 は停止。OSL_CAP_CMD_IDENTIFY を立てた機種だけ用意する。
     void (*on_identify)(uint8_t seconds);
+
+    // 親機がユーザー領域を書き換えたときに呼ばれる (割り込みの外、OSL_Task から)。
+    // 設定の変更に応じた処理 (フィルタの作り直し、ヒーターの入切など) を行う。不要なら NULL。
+    void (*on_user_changed)(void);
 } osl_config_t;
 
 // </editor-fold>
@@ -135,6 +139,11 @@ void OSL_Tick(uint16_t elapsed_ms);
 // status は channel_count バイト。sample_seq を 1 進めて POLL を作り直す。
 // values = NULL なら値と sample_seq はそのままで、状態だけを更新する。
 void OSL_Publish(const void *values, const uint8_t *status);
+
+// 工場出荷状態に戻す: I2C アドレスを既定値に、名前を空に、ユーザー領域を初期値にして
+// EEPROM に保存する。新しいアドレスにはすぐ切り替わる。基板のリセットスイッチの
+// 長押しなど、機種側の操作から呼ぶ (遠隔からは呼べない。仕様 §10)。
+void OSL_FactoryReset(void);
 
 // センサとの通信の異常を 1 回数える (拡張ステータスの err_sensor)。
 void OSL_CountSensorError(void);

@@ -1,10 +1,19 @@
  /*
- * AVR128DB32 による風速計子機 (PoEM-pod 用 OSL 子機)。
- * 定温熱線式風速計の電圧を読み取り、風速 [m/s] に換算して
- * 共通レジスタ仕様 (SHASE 2026 第2報) で I2C 経由に提供する。
+ * AVR128DB32 による風速計子機 (PoEM 用 OSL v2 子機)。
+ * 定温熱線式風速計の電圧を読み取り、風速 [m/s] に換算して OSL 共通レジスタ v2 で
+ * TWI0 スレーブとして親機に提供する。共通部は ../osl_common/osl_slave.c。
  *
- * value[0] = 風速 [m/s]   (BACnet unit 74)
- * value[1] = 生電圧 [V]   (BACnet unit 5)
+ * ch0 = 風速 [m/s]   (BACnet unit 74)
+ * ch1 = 生電圧 [V]   (BACnet unit 5、補助値)
+ *
+ * ユーザー領域 (0x1000〜):
+ *   0x1000 enable (u8)    風速計回路 (5V 昇圧・熱線) の入切。起動時は必ず 1 にする
+ *   0x1001 filter_n (u8)  平滑化フィルタの係数 (0〜20)
+ *   0x1004 E0, m1, lnC1, m2, lnC2 (float×5)  King の法則の係数 (v1 の coefficientA)
+ *   0x1018 m3, lnC3, vSplit1, vSplit2 (float×4)  (v1 の coefficientB[0..3])
+ *
+ * 計測は 20 ms 周期 (ADC + 指数平滑)。親機には 500 ms ごとに新しい値を公開する。
+ * LED は識別コマンドで点滅させる。リセットスイッチを 3 秒長押しすると工場出荷状態に戻る。
  */
 
 // <editor-fold defaultstate="collapsed" desc="include">
@@ -14,11 +23,8 @@
 #include "mcc_generated_files/system/pins.h"
 #include "mcc_generated_files/timer/rtc.h"
 
-#include "utility.h"
-#include "i2c_slave.h"
-#include "i2c_shared_data.h"
 #include "smooth_filter.h"
-#include "eeprom_manager.h"
+#include "osl_slave.h"
 
 #include <util/atomic.h>
 #include <string.h>
@@ -28,27 +34,99 @@
 
 // </editor-fold>
 
-// <editor-fold defaultstate="collapsed" desc="定数宣言">
+// <editor-fold defaultstate="collapsed" desc="定数">
+
+// ファームウェアの版
+#define FW_MAJOR        2
+#define FW_MINOR        0
+#define FW_PATCH        0
+
+// model_id (仕様 §6.1)
+#define MODEL_VEL_HOTWIRE   0x0201
 
 #define HEATING_MSEC    (5000)  // 白金抵抗予熱時間 [msec]
-#define INTERRUPT_MSEC  (20)    // タイマ割り込み間隔 [msec]
+#define TICK_MS         (20)    // タイマ割り込み間隔 [msec] (RTC PER = 654 → 32768/655 Hz)
 #define RESET_TIME      (3000)  // Reset 押し続け時間 [msec]
 
-// meas_count (0x2A) を進める間引き数。20ms × 10 = 200ms 周期 = 毎秒 +5。
-// 計測そのものは 20ms のままで、カウンタだけ間引く。20ms ごとに進めると毎秒 +50 で
-// 5.1 秒ごとに巻き戻り、親機の 1 秒ポーリングに対して粗すぎる。
-#define MEAS_COUNT_DIV  (10)
+// 新しい値を公開する周期 [ms]。計測そのものは 20 ms ごとに行い、指数平滑で均す。
+#define PUBLISH_MS      (500)
+#define PUBLISH_TICKS   (PUBLISH_MS / TICK_MS)
+
+// 識別表示の点滅の半周期 [ms] (4 Hz)
+#define IDENTIFY_HALF_MS (120)
 
 // </editor-fold>
 
-// <editor-fold defaultstate="collapsed" desc="変数定義">
+// <editor-fold defaultstate="collapsed" desc="OSL の設定">
 
-volatile uint8_t  tick_count = 0;
-volatile uint16_t reset_timer = RESET_TIME;
-uint16_t heating_timer = HEATING_MSEC;
+#pragma pack(push, 1)
+typedef struct {
+    uint8_t enable;         // 0x1000
+    uint8_t filter_n;       // 0x1001
+    uint8_t reserved[2];    // 0x1002 float の整列用
+    float   E0;             // 0x1004 無風電圧 [V]
+    float   m1;             // 0x1008
+    float   lnC1;           // 0x100C
+    float   m2;             // 0x1010
+    float   lnC2;           // 0x1014
+    float   m3;             // 0x1018
+    float   lnC3;           // 0x101C
+    float   vSplit1;        // 0x1020 [m/s]
+    float   vSplit2;        // 0x1024 [m/s]
+} user_region_t;
+#pragma pack(pop)
+
+static user_region_t       s_user;
+static const user_region_t s_user_default = {
+    .enable   = 1,
+    .filter_n = 6,
+    .E0 = 0.462f, .m1 = 0.970f, .lnC1 = 0.183f, .m2 = 1.584f, .lnC2 = 0.865f,
+    .m3 = 0.410f, .lnC3 = 0.0f, .vSplit1 = 0.0f, .vSplit2 = 0.0f,
+};
+
+static const osl_channel_t s_channels[2] = {
+    { 74, OSL_TYPE_FLOAT32, "Vel",  3, 0           },   // 風速 [m/s]
+    {  5, OSL_TYPE_FLOAT32, "Volt", 4, OSL_CHF_AUX },   // 風速計回路の生電圧 [V]
+};
+
+static void onIdentify(uint8_t seconds);
+static void onUserChanged(void);
+
+static const osl_config_t s_osl = {
+    .vendor_id        = OSL_VENDOR_POEM,
+    .model_id         = MODEL_VEL_HOTWIRE,
+    .fw_major         = FW_MAJOR,
+    .fw_minor         = FW_MINOR,
+    .fw_patch         = FW_PATCH,
+    .update_period_ms = PUBLISH_MS,
+    .channel_count    = 2,
+    .channels         = s_channels,
+    .capability       = OSL_CAP_CH_ATTR | OSL_CAP_EXT_STATUS | OSL_CAP_CMD_RESET
+                      | OSL_CAP_CMD_IDENTIFY,
+    .hw_rev           = 0,
+    .avg_window_ms    = 0,              // 平均ではなく指数平滑 (filter_n)
+    .warmup_ms        = HEATING_MSEC,
+    .default_i2c_addr = OSL_DEFAULT_I2C_ADDR,
+    .user_region      = &s_user,
+    .user_size        = sizeof(s_user),
+    .user_writable    = true,
+    .user_default     = &s_user_default,
+    .on_identify      = onIdentify,
+    .on_user_changed  = onUserChanged,
+};
+
+// </editor-fold>
+
+// <editor-fold defaultstate="collapsed" desc="変数">
+
+static volatile uint8_t tick_count = 0;
+static uint16_t heating_timer = HEATING_MSEC;
+static uint16_t reset_timer   = RESET_TIME;
+static uint16_t identify_ms   = 0;      // 識別表示の残り時間
+static uint8_t  enabled       = 1;      // 現在の風速計回路の状態
 
 // 風速電圧平滑化フィルタ
-SmoothFilter velFilter;
+static SmoothFilter velFilter;
 
 // </editor-fold>
 
@@ -57,8 +135,6 @@ SmoothFilter velFilter;
 // 風速計回路の出力電圧を AD 変換 (mV, 0-2000)
 static uint32_t adcVelocityVoltage(void)
 {
-    if (!SharedMemory.reg.enable) return 0;
-
     ADC0_ChannelSelect(ADC0_CHANNEL_AIN21);
     ADC0.SAMPCTRL = 0;
     ADC0.CTRLD |= ADC_INITDLY_DLY0_gc;
@@ -71,232 +147,156 @@ static uint32_t adcVelocityVoltage(void)
     return safe_val * 2000UL / (4096UL * 16UL);
 }
 
-// 風速電圧を AD 変換して平滑化し、フィルタ出力 [V] を返す。
-// SharedMemory への公開は行わない (公開タイミングは main loop が制御する)
+// 風速電圧を AD 変換して平滑化し、フィルタ出力 [V] を返す
 static float sampleVelocityVoltage(void)
 {
     uint32_t voltage_mv = adcVelocityVoltage();
     SF_Apply(&velFilter, (int32_t)voltage_mv);
-
     return (float)velFilter.out_y * 0.001f;
 }
 
-// 電圧 [V] から風速 [m/s] を計算して返す。SharedMemory への公開は行わない
+// 電圧 [V] から風速 [m/s] を計算する。
+// King の法則 v = exp(m * ln(E^2 - E0^2) + lnC) を 3 区分でフィット。
 static float computeVelocity(float voltage_v)
 {
-    // 補正係数取得 (native LE なのでそのまま memcpy)
-    float coA[5];
-    float coB[5];
+    user_region_t u;
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-        memcpy(coA, (const void*)SharedMemory.reg.coefficientA, sizeof(coA));
-        memcpy(coB, (const void*)SharedMemory.reg.coefficientB, sizeof(coB));
+        u = s_user;     // 係数は親機が I2C で書き換えるので、まとめて取り出す
     }
 
-    // King の法則 v = exp(m * ln(E^2 - E0^2) + lnC) を 3 区分でフィット。
-    // coA = [E0, m1, lnC1, m2, lnC2] / coB = [m3, lnC3, v_split1, v_split2, _]
-    float vol0     = coA[0]; // 無風電圧 [V]
-    float m1       = coA[1];
-    float lnC1     = coA[2];
-    float m2       = coA[3];
-    float lnC2     = coA[4];
-    float m3       = coB[0];
-    float lnC3     = coB[1];
-    float v_split1 = coB[2]; // [m/s]
-    float v_split2 = coB[3]; // [m/s]
+    float evv = voltage_v * voltage_v - u.E0 * u.E0;
+    if (evv <= 0.0f) return 0.0f;
 
-    float evv = voltage_v * voltage_v - vol0 * vol0;
-    float vel_f;
-    if (evv <= 0.0f) {
-        vel_f = 0.0f;
-    } else {
-        float lnev = logf(evv);
-        vel_f = expf(lnev * m1 + lnC1);
-        if (v_split1 <= vel_f) {
-            vel_f = expf(lnev * m2 + lnC2);
-            if (v_split2 <= vel_f) vel_f = expf(lnev * m3 + lnC3);
-        }
+    float lnev  = logf(evv);
+    float vel_f = expf(lnev * u.m1 + u.lnC1);
+    if (u.vSplit1 <= vel_f) {
+        vel_f = expf(lnev * u.m2 + u.lnC2);
+        if (u.vSplit2 <= vel_f) vel_f = expf(lnev * u.m3 + u.lnC3);
     }
-
     return vel_f;
+}
+
+// 風速計回路の入切。入れたら予熱からやり直す。
+static void applyEnable(uint8_t enable)
+{
+    if (enable && !enabled) heating_timer = HEATING_MSEC;
+    enabled = enable ? 1 : 0;
+    if (enabled) SLP_SetHigh();
+    else         SLP_SetLow();
+}
+
+// </editor-fold>
+
+// <editor-fold defaultstate="collapsed" desc="OSL のコールバック (割り込みの外)">
+
+static void onIdentify(uint8_t seconds)
+{
+    identify_ms = (uint16_t)seconds * 1000U;
+    if (identify_ms == 0) LED_SetLow();
+}
+
+// 親機がユーザー領域を書き換えたとき: enable と filter_n を反映する
+static void onUserChanged(void)
+{
+    uint8_t en, n;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        en = s_user.enable;
+        n  = s_user.filter_n;
+    }
+    applyEnable(en);
+    SF_Init(&velFilter, n, velFilter.out_y);
 }
 
 // </editor-fold>
 
 // <editor-fold defaultstate="collapsed" desc="main">
 
-// 20msec タイマ用コールバック
-void msecHandler(void)
+// 20 ms タイマ用コールバック
+static void tickHandler(void)
 {
     if (tick_count < 255) tick_count++;
 }
 
 int main(void)
 {
+    // WDT は SYSTEM_Initialize() 内で 4.1 秒周期に設定される。メインループで
+    // 必ず wdt_reset() を呼ぶこと。
     SYSTEM_Initialize();
 
-    // EEPROM 読み込み (filter_n / coefficient* / new_addr が確定する)
-    EM_loadEEPROM();
+    OSL_Init(&s_osl);
 
-    // I2C アドレスを反映 (new_addr に EEPROM 値が入っている)
-    TWI0.SADDR = SharedMemory.reg.new_addr << 1;
+    // 風速計回路は起動時に必ず入れる (保存されていた enable によらない)。
+    // 親機から給電されていて低消費電力の必要は無い。
+    s_user.enable = 1;
+    enabled = 0;
+    applyEnable(1);
 
-    // ===== OSL 共通レジスタの初期化 ===========================================
-    // Device ID = SIGROW.SERNUM の FNV-1a ハッシュ (22-bit fold)。
-    // 22-bit に揃えることで BACnet Object Instance としてそのまま使える。
-    {
-        uint8_t serial[16];
-        memcpy(serial, (const void*)&SIGROW.SERNUM0, sizeof(serial));
-        SharedMemory.reg.device_id = fnv1a_22(serial, sizeof(serial));
-    }
-    SharedMemory.reg.addr_key      = 0x00;
-    SharedMemory.reg.data_count    = 2;
-    SharedMemory.reg.unit_type[0]  = UNIT_METERS_PER_SECOND;
-    SharedMemory.reg.unit_type[1]  = UNIT_VOLTS;
-    SharedMemory.reg.status1       = 0;
-    SharedMemory.reg.status2       = 0;
-    // meas_count は RAM 上の変数なので、再起動すると必ず 0 に戻る。親機はこの値が
-    // 1 秒あたり 5 進むかどうかを見て、黙って再起動していないかを判定する。
-    SharedMemory.reg.meas_count    = 0;
-    SharedMemory.reg.err_count     = 0;
-    for (uint8_t i = 0; i < 8; i++) SharedMemory.reg.value[i] = 0.0f;
-
-    // ===== 拡張領域の初期化 ===================================================
-    // 多数台接続時の電源 IR drop 切り分け用に、起動時は風速計測を OFF にする。
-    // 通常運用に戻すときは enable=1 / SLP_SetHigh() に戻す。
-    SharedMemory.reg.enable = 1;
-
-    // 風速回路有効化 (5V 昇圧 ON、熱線電源)
-    SLP_SetHigh();
-
-    // イベントハンドラ登録
-    RTC_SetOVFIsrCallback(msecHandler);
-
-    // I2C 通信初期化
-    I2C_Slave_Init();
-
-    // 風速電圧平滑化フィルタの初期化
-    SF_Init(&velFilter, SharedMemory.reg.filter_n, 0);
+    SF_Init(&velFilter, s_user.filter_n, 0);
+    RTC_SetOVFIsrCallback(tickHandler);
 
     set_sleep_mode(SLEEP_MODE_IDLE);
     sei();
 
-    uint8_t prev_enabled = SharedMemory.reg.enable;
-    uint8_t meas_div     = 0;
+    OSL_SetNotReady(true);
+    uint8_t publish_div = 0;
+
     while (1)
     {
-        // WDT は SYSTEM_Initialize() 内で 4.1 秒周期に設定されている
-        // (mcc_generated_files/system/src/system.c の WDT_Initialize)。
-        // 呼ばないでいると 4.1 秒ごとに勝手に再起動する。温湿度センサでは
-        // これが抜けていて、I2C バス全体を止める原因になっていた (#7)。
         wdt_reset();
+        OSL_Task();     // EEPROM への保存、コマンドの実行、設定変更の反映
 
-        // マスタからの設定変更リクエスト
-        if (I2C_Config_Update_Requested)
-        {
-            I2C_Config_Update_Requested = false;
-
-            // enable 状態変化
-            if (prev_enabled != SharedMemory.reg.enable)
-            {
-                if (SharedMemory.reg.enable == 1) {
-                    SLP_SetHigh();
-                    heating_timer = HEATING_MSEC;
-                } else {
-                    SLP_SetLow();
-                }
-                prev_enabled = SharedMemory.reg.enable;
-            }
-
-            // 新しい n 数でフィルタ再初期化
-            SF_Init(&velFilter, SharedMemory.reg.filter_n, velFilter.out_y);
-
-            EM_updateEEPROM();
-        }
-
-        // 係数変更リクエスト
-        if (I2C_Coefficient_Update_Requested)
-        {
-            I2C_Coefficient_Update_Requested = false;
-            EM_updateEEPROM();
-        }
-
-        // 定期更新処理
         if (tick_count)
         {
             ATOMIC_BLOCK(ATOMIC_RESTORESTATE) { tick_count--; }
+            OSL_Tick(TICK_MS);
 
-            // MEAS_COUNT_DIV 回に 1 度 +1。255 の次は 0 に戻る (uint8 の自然な巻き戻り)。
-            // 予熱中や enable=0 でも進める。「MCU が生きて回っているか」だけを表す
-            // 信号にしたいので、計測の可否は status1 に任せる。
-            if (++meas_div >= MEAS_COUNT_DIV) {
-                meas_div = 0;
-                SharedMemory.reg.meas_count++;
-            }
-
-            // I2C keepalive
-            if (0 < I2C_KeepAlive_Ticks)
-            {
-                ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-                    I2C_KeepAlive_Ticks = (I2C_KeepAlive_Ticks < INTERRUPT_MSEC) ? 0 : (I2C_KeepAlive_Ticks - INTERRUPT_MSEC);
-                }
-            }
-
-            // Reset スイッチ長押し -> EEPROM 初期化
-            if (RST_SW_GetValue() == 0)
-            {
-                reset_timer = reset_timer < INTERRUPT_MSEC ? 0 : reset_timer - INTERRUPT_MSEC;
-                if (reset_timer == 0)
-                {
-                    EM_resetEEPROM();
+            // リセットスイッチ長押し → 工場出荷状態
+            if (RST_SW_GetValue() == 0) {
+                reset_timer = (reset_timer < TICK_MS) ? 0 : (uint16_t)(reset_timer - TICK_MS);
+                if (reset_timer == 0) {
+                    OSL_FactoryReset();
                     reset_timer = RESET_TIME;
                 }
+            } else {
+                reset_timer = RESET_TIME;
             }
-            else reset_timer = RESET_TIME;
+
+            // 識別表示 (4 Hz の点滅)
+            if (identify_ms) {
+                identify_ms = (identify_ms < TICK_MS) ? 0 : (uint16_t)(identify_ms - TICK_MS);
+                if (identify_ms && (identify_ms / IDENTIFY_HALF_MS) & 1) LED_SetHigh();
+                else                                                     LED_SetLow();
+            }
 
             // 残予熱時間
-            heating_timer = (heating_timer < INTERRUPT_MSEC) ? 0 : (heating_timer - INTERRUPT_MSEC);
+            heating_timer = (heating_timer < TICK_MS) ? 0 : (uint16_t)(heating_timer - TICK_MS);
 
-            // Status1 更新 (予熱中と熱線 OFF 中は両計測値とも stale)。
-            // enable=0 でも heating_timer は 0 まで減り続けるため、enable を見ずに
-            // heating_timer だけで判定すると熱線 OFF・value=0.0 のまま
-            // status1=0x00 (全 valid) になり、「0 m/s が有効値」として読めてしまう。
-            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-                if (heating_timer > 0 || SharedMemory.reg.enable == 0)
-                    SharedMemory.reg.status1 = STATUS1_ALL_STALE;
-                else
-                    SharedMemory.reg.status1 = 0x00;
+            // 計測 (20 ms ごと)。予熱中と回路 OFF 中は計測しない。
+            bool ready = enabled && heating_timer == 0;
+            float v[2] = { 0.0f, 0.0f };
+            if (ready) {
+                v[1] = sampleVelocityVoltage();
+                v[0] = computeVelocity(v[1]);
             }
 
-            // 計測準備が整っていれば計測
-            if (SharedMemory.reg.enable == 1 && heating_timer == 0)
-            {
-                float voltage_v = sampleVelocityVoltage();
-                float vel_f     = computeVelocity(voltage_v);
-
-                // マスタが POLL ブロックを読んでいる途中に value[] の float を
-                // 書き換えると、前半旧値・後半新値の壊れた float が valid として
-                // 渡る。I2C 通信中は公開せず次 tick (20ms 後) に回す。
-                // フィルタ状態 (velFilter) は上で更新済みなので計測は途切れない。
-                if (!I2C_Is_Busy) {
-                    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-                        SharedMemory.reg.value[VAL_IDX_VOLTAGE]  = voltage_v;
-                        SharedMemory.reg.value[VAL_IDX_VELOCITY] = vel_f;
-                        // 計測値更新フラグを立てる (親機が読み取り後に 0 を書き戻す)
-                        SharedMemory.reg.status2 = 1;
-                    }
+            // 公開 (500 ms ごと)
+            if (++publish_div >= PUBLISH_TICKS) {
+                publish_div = 0;
+                uint8_t st[2];
+                if (ready) {
+                    st[0] = st[1] = OSL_ST_OK;
+                    OSL_Publish(v, st);
+                } else {
+                    // 予熱中は準備中、回路 OFF 中は「計測していない」ので異常として示す
+                    st[0] = st[1] = enabled ? OSL_ST_NOT_READY : OSL_ST_UNRELIABLE;
+                    OSL_Publish(NULL, st);
                 }
+                OSL_SetNotReady(enabled && !ready);
             }
         }
 
-        // スリープは IDLE 固定 (起動時に設定済み)。
-        //
-        // 以前は enable=0 かつ I2C が空いているときに PWR_DOWN へ落としていたが、
-        // WDT を有効にしたので使えない。RTC が RUNSTDBY disabled のため PWR_DOWN
-        // では tick が来ず、main ループが回らず wdt_reset() を呼べない。一方 WDT は
-        // 専用発振器で動き続けるので、4.1 秒後に誤って再起動してしまう。
-        //
-        // pod から給電されていて低消費電力の必要が無く、起動時に enable=1 を
-        // 書いているので PWR_DOWN には元々到達していなかった。
+        // スリープは IDLE 固定。RTC が RUNSTDBY disabled のため、PWR_DOWN では
+        // tick が来ず wdt_reset() を呼べなくなり、WDT で再起動してしまう。
         sleep_mode();
     }
 }

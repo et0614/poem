@@ -48,12 +48,10 @@
           <itemPath>mcc_generated_files/timer/delay.h</itemPath>
         </logicalFolder>
       </logicalFolder>
-      <itemPath>i2c_shared_data.h</itemPath>
       <itemPath>i2c_master.h</itemPath>
       <itemPath>bmp585.h</itemPath>
       <itemPath>utility.h</itemPath>
-      <itemPath>eeprom_manager.h</itemPath>
-      <itemPath>i2c_slave.h</itemPath>
+      <itemPath>../osl_common/osl_slave.h</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"
@@ -107,11 +105,11 @@
       <itemPath>i2c_master.c</itemPath>
       <itemPath>bmp585.c</itemPath>
       <itemPath>utility.c</itemPath>
-      <itemPath>eeprom_manager.c</itemPath>
-      <itemPath>i2c_slave.c</itemPath>
+      <itemPath>../osl_common/osl_slave.c</itemPath>
     </logicalFolder>
   </logicalFolder>
   <sourceRootList>
+    <Elem>../osl_common</Elem>
     <Elem>.</Elem>
   </sourceRootList>
   <projectmakefile>Makefile</projectmakefile>
@@ -213,7 +211,7 @@
         <property key="default-char-type" value="true"/>
         <property key="define-macros" value=""/>
         <property key="disable-optimizations" value="false"/>
-        <property key="extra-include-directories" value=""/>
+        <property key="extra-include-directories" value=".;../osl_common"/>
         <property key="favor-optimization-for" value="-speed,+space"/>
         <property key="garbage-collect-data" value="true"/>
         <property key="garbage-collect-functions" value="true"/>

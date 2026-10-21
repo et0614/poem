@@ -106,6 +106,7 @@ static bool     s_user_touched;
 
 // 割り込みからメインループへの依頼
 static volatile bool    s_persist_req;
+static volatile bool    s_user_changed;
 static volatile bool    s_reset_req;
 static volatile bool    s_identify_req;
 static volatile uint8_t s_identify_sec;
@@ -453,6 +454,7 @@ static void end_transaction(void)
 
     if (s_user_touched) {
         s_user_touched = false;
+        s_user_changed = true;
         s_persist_req  = true;
     }
 
@@ -560,6 +562,10 @@ void OSL_Init(const osl_config_t *cfg)
 
 void OSL_Task(void)
 {
+    if (s_user_changed) {
+        s_user_changed = false;
+        if (s_cfg->on_user_changed) s_cfg->on_user_changed();
+    }
     if (s_persist_req) {
         s_persist_req = false;
         ee_save();
@@ -610,6 +616,22 @@ void OSL_Publish(const void *values, const uint8_t *status)
     }
     if (status) memcpy(s_status, status, n);
     build_poll();
+}
+
+void OSL_FactoryReset(void)
+{
+    uint8_t addr = s_cfg->default_i2c_addr ? s_cfg->default_i2c_addr : OSL_DEFAULT_I2C_ADDR;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        s_i2c_addr = addr;
+        TWI0.SADDR = (uint8_t)(addr << 1);
+        memset(s_name, 0, NAME_LEN);
+        seal(s_name, NAME_LEN);
+        if (s_cfg->user_size) {
+            memcpy(s_cfg->user_region, s_cfg->user_default, s_cfg->user_size);
+        }
+    }
+    ee_save();
+    if (s_cfg->on_user_changed) s_cfg->on_user_changed();
 }
 
 void OSL_CountSensorError(void)
