@@ -5,9 +5,10 @@
  * 子機を表す構造体と関連定数の定義。OSL 共通レジスタ v2 に対応する
  * (仕様は「OSL共通レジスタv2_アドレス表.md」)。
  *
- * 親機は子機ごとに「毎周期の publish に要るもの」だけを RAM に持つ。名前 (64 B) と
- * チャネル記述 (最大 258 B) は持たず、config を送るときや Web 画面で子機から読み直す
- * (64 台ぶん持つと数 KB になり、SRAM 16 KB に対して重いため)。
+ * 親機は子機ごとに「読み方を決めるのに要る最小限」だけを RAM に持つ。計測値も持たない。
+ * 毎周期 POLL を読んだらその場で JSON にして publish し、読めなかったときは
+ * 「通信失敗」の状態だけを送る (値はサーバが前回値のまま保持する)。
+ * 名前・チャネル記述・識別は、config を送るときや Web 画面で子機から読み直す。
  */
 
 #ifndef SLAVE_NODE_H
@@ -26,10 +27,6 @@ extern "C" {
 // 1 子機あたりの計測値 (チャネル) の最大数 (仕様 §3.2)
 #define NODE_MAX_VALUES         16
 
-// MQTT (現行の形式) で送るチャネル数の上限。PoEMServer が 8 個までしか扱わないため。
-// MQTT とサーバを v2 にするときに NODE_MAX_VALUES へ揃える。
-#define MQTT_MAX_VALUES         8
-
 // I²C アドレスの走査範囲 (7bit、予約域を除いた一般デバイス領域)
 #define I2C_ADDR_SCAN_FIRST     0x08
 #define I2C_ADDR_SCAN_LAST      0x77
@@ -41,6 +38,7 @@ extern "C" {
 #define REG_CHDESC              0x0100  // チャネル記述 16 B × N + CRC
 #define REG_POLL                0x0300  // POLL (sample_seq, value[N], status[N], CRC)
 #define REG_EXT_IDENT           0x0400  // 拡張識別 8 B + CRC
+#define REG_EXT_ATTR            0x0420  // 拡張チャネル属性 4 B × N + CRC
 #define REG_EXT_STATUS          0x0480  // 拡張ステータス 10 B + CRC
 
 #define IDENT_LEN               32
@@ -50,6 +48,7 @@ extern "C" {
 #define ADDR_KEY_UNLOCK         0xA5
 
 // capability (拡張識別)
+#define CAP_CH_ATTR             0x0001
 #define CAP_EXT_STATUS          0x0002
 
 // value_type (チャネル記述)
@@ -57,20 +56,18 @@ extern "C" {
 #define VTYPE_INT32             1
 #define VTYPE_UINT32            2
 
-// 親機が子機を読めなかったときに MQTT の st に入れる値 (現行の形式との互換)
-#define STATUS1_ALL_STALE       0xFF
+// チャネルの状態 (BACnet Reliability)。親機が子機を読めなかったときに全チャネルへ付ける。
+#define ST_COMMUNICATION_FAILURE 12
+#define ST_UNRELIABLE_OTHER      7
 
 // 親機側 RAM に保持する子機の状態
 typedef struct {
     uint8_t  i2c_addr;                  // 7bit
-    uint32_t device_id;                 // 16 B の device_id を FNV-1a で 22bit に畳み込んだ値 (MQTT 用)
     uint8_t  data_count;                // チャネル数 (≤ NODE_MAX_VALUES)
     bool     has_ext_status;            // 拡張ステータスを実装している
-    uint32_t type_bits;                 // チャネルごとの value_type (2bit × 16)
-    uint16_t stale_mask;                // bit i = チャネル i が正常でない (status ≠ 0、または読めない)
-    uint16_t sample_seq;                // 直近に読んだ sample_seq
     bool     comm_ok;                   // 直近の POLL を読めた
-    float    value[NODE_MAX_VALUES];    // 直近の計測値 (整数型も float に直して持つ)
+    uint32_t type_bits;                 // チャネルごとの value_type (2bit × 16)
+    uint64_t prec_bits;                 // チャネルごとの有効桁数 (4bit × 16、0 = 既定の 6 桁)
 
     // 診断の変化検出用 (拡張ステータス)
     uint16_t err_i2c;

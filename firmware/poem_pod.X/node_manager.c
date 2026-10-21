@@ -68,16 +68,6 @@ static bool read_checked(uint8_t addr, uint16_t reg, uint8_t* buf, uint16_t len)
 static inline bool is_foreign(uint8_t addr) { return (s_foreign[addr >> 3] >> (addr & 7)) & 1; }
 static inline void set_foreign(uint8_t addr) { s_foreign[addr >> 3] |= (uint8_t)(1 << (addr & 7)); }
 
-// device_id (16 B) を FNV-1a で 22bit に畳み込む。v1 の子機が SIGROW.SERNUM から作って
-// いた値と同じ計算なので、AVR の子機は v1 と同じ ID になる (PoEMServer の登録が続く)。
-static uint32_t fold_id(const uint8_t* uid)
-{
-    uint32_t h = fnv1a_32(uid, 16);
-    h = (h ^ (h >> 22)) & 0x3FFFFFUL;
-    if (h == 0x3FFFFFUL) h = 0x3FFFFEUL;
-    return h;
-}
-
 // </editor-fold>
 
 // <editor-fold defaultstate="collapsed" desc="走査">
@@ -118,26 +108,36 @@ static bool probe_node(uint8_t addr, slave_node_t* node)
     uint8_t n = id[11];
     if (n == 0 || n > NODE_MAX_VALUES) { set_foreign(addr); return false; }
 
-    // チャネルの型 (整数型を float に直すため)
+    // チャネルの型 (値を型どおりに JSON にするため)
     uint8_t ch[16 * NODE_MAX_VALUES + 2];
     if (!read_checked(addr, REG_CHDESC, ch, 16 * n + 2)) return false;
 
-    // 拡張識別 (拡張ステータスを読めるか)。未実装なら CRC 込みですべて 0。
+    // 拡張識別 (拡張ステータスを読めるか、有効桁数があるか)。未実装なら CRC 込みですべて 0。
     uint8_t ext[EXT_IDENT_LEN];
-    bool has_ext = false;
+    uint16_t cap = 0;
     if (read_reg(addr, REG_EXT_IDENT, ext, EXT_IDENT_LEN) && crc_ok(ext, EXT_IDENT_LEN)) {
-        has_ext = (get_u16(&ext[0]) & CAP_EXT_STATUS) != 0;
+        cap = get_u16(&ext[0]);
     }
 
     memset(node, 0, sizeof(*node));
     node->i2c_addr       = addr;
-    node->device_id      = fold_id(&id[14]);
     node->data_count     = n;
-    node->has_ext_status = has_ext;
+    node->has_ext_status = (cap & CAP_EXT_STATUS) != 0;
     for (uint8_t i = 0; i < n; i++) {
         node->type_bits |= (uint32_t)(ch[16 * i + 2] & 0x03) << (2 * i);
     }
-    node->stale_mask = 0xFFFF;      // まだ値を読んでいない
+
+    // 有効桁数 (拡張チャネル属性)。無ければ 0 = 既定の 6 桁
+    if (cap & CAP_CH_ATTR) {
+        uint8_t attr[4 * NODE_MAX_VALUES + 2];
+        if (read_checked(addr, REG_EXT_ATTR, attr, 4 * n + 2)) {
+            for (uint8_t i = 0; i < n; i++) {
+                uint8_t prec = attr[4 * i];
+                if (prec > 15) prec = 15;
+                node->prec_bits |= (uint64_t)prec << (4 * i);
+            }
+        }
+    }
     return true;
 }
 
@@ -186,42 +186,10 @@ uint8_t NM_scanNewNodes(void)
 
 // <editor-fold defaultstate="collapsed" desc="計測値・名前・アドレス・診断">
 
-bool NM_pollOne(slave_node_t* node)
+bool NM_readIdent(const slave_node_t* node, uint8_t* buf)
 {
-    uint8_t n = node->data_count;
-    uint16_t len = (uint16_t)(2 + 5 * n + (n & 1) + 2);
-    uint8_t buf[2 + 5 * NODE_MAX_VALUES + 1 + 2];
-
-    // CRC を照合するので、v1 で起きていたバイト化けや NaN の混入はここで捨てられる。
-    // POLL は番地を指定した瞬間に子機が一括で写し取るので、値が裂けることもない。
-    if (!read_checked(node->i2c_addr, REG_POLL, buf, len)) {
-        node->comm_ok = false;
-        return false;
-    }
-
-    node->comm_ok    = true;
-    node->sample_seq = get_u16(&buf[0]);
-    uint16_t stale = 0;
-    for (uint8_t i = 0; i < n; i++) {
-        const uint8_t* p = &buf[2 + 4 * i];
-        uint8_t type = (uint8_t)((node->type_bits >> (2 * i)) & 0x03);
-        float v;
-        if (type == VTYPE_INT32) {
-            int32_t x;  memcpy(&x, p, 4);  v = (float)x;
-        } else if (type == VTYPE_UINT32) {
-            uint32_t x; memcpy(&x, p, 4);  v = (float)x;
-        } else {
-            memcpy(&v, p, 4);           // AVR は LE なのでそのまま
-        }
-        // 状態が正常でないチャネルは値を更新せず、前回値のまま異常ビットを立てる
-        if (buf[2 + 4 * n + i] != 0 || !isfinite(v)) {
-            stale |= (uint16_t)(1u << i);
-        } else {
-            node->value[i] = v;
-        }
-    }
-    node->stale_mask = stale;
-    return true;
+    return read_checked(node->i2c_addr, REG_IDENT, buf, IDENT_LEN)
+        && memcmp(buf, "OSL", 3) == 0;
 }
 
 bool NM_readName(const slave_node_t* node, char* buf)
@@ -237,10 +205,20 @@ bool NM_readName(const slave_node_t* node, char* buf)
 void NM_truncateUtf8(char* s, uint16_t max_bytes)
 {
     uint16_t len = (uint16_t)strlen(s);
-    if (len <= max_bytes) return;
-    // 続きのバイト (10xxxxxx) で切らないよう、文字の先頭まで戻る
-    while (max_bytes > 0 && ((uint8_t)s[max_bytes] & 0xC0) == 0x80) max_bytes--;
-    s[max_bytes] = '\0';
+    if (len > max_bytes) {
+        // 続きのバイト (10xxxxxx) で切らないよう、文字の先頭まで戻る
+        while (max_bytes > 0 && ((uint8_t)s[max_bytes] & 0xC0) == 0x80) max_bytes--;
+        s[max_bytes] = '\0';
+        len = max_bytes;
+    }
+    // 末尾の多バイト文字が途中で切れていれば (先頭バイトが示す長さに足りなければ) 取り除く
+    uint16_t i = len;
+    while (i > 0 && ((uint8_t)s[i - 1] & 0xC0) == 0x80) i--;
+    if (i > 0) {
+        uint8_t lead = (uint8_t)s[i - 1];
+        uint8_t need = (lead >= 0xF0) ? 4 : (lead >= 0xE0) ? 3 : (lead >= 0xC0) ? 2 : 1;
+        if ((uint16_t)(len - (i - 1)) < need) s[i - 1] = '\0';
+    }
 }
 
 bool NM_writeName(const slave_node_t* node, const char* new_name)
@@ -287,29 +265,12 @@ bool NM_readExtStatus(const slave_node_t* node, uint32_t* uptime_s, uint8_t* res
 
 // </editor-fold>
 
-// <editor-fold defaultstate="collapsed" desc="MQTT">
+// <editor-fold defaultstate="collapsed" desc="MQTT v2">
 
-void NM_buildConfigTopic(const slave_node_t* node, char* buf, uint16_t bufsize)
+void NM_buildTopic(const slave_node_t* node, const char* pod_id, const char* kind,
+                   char* buf, uint16_t bufsize)
 {
-    snprintf(buf, bufsize, "nodes/config/%lu", (unsigned long)node->device_id);
-}
-
-void NM_buildDataTopic(const slave_node_t* node, char* buf, uint16_t bufsize)
-{
-    snprintf(buf, bufsize, "nodes/data/%lu", (unsigned long)node->device_id);
-}
-
-// 浮動小数点を有効数字 6 桁に丸める。NaN/Inf はそのまま返す。
-//
-// 4 桁だと絶対圧センサ (BMP585) の大気圧 101325 Pa が 101300 Pa になり、分解能が
-// 100 Pa まで落ちる。6 桁なら 1e5 付近で 1 Pa 刻み。float の仮数は 24 bit (約 7 桁)
-// なので、x * factor が 999999.5 以下に収まるこの丸めは誤差なく動く。
-static float roundTo6Sigfig(float x)
-{
-    if (!isfinite(x) || x == 0.0f) return x;
-    float magnitude = floorf(log10f(fabsf(x)));
-    float factor    = powf(10.0f, 5 - magnitude);
-    return roundf(x * factor) / factor;
+    snprintf(buf, bufsize, "poem/%s/node/%u/%s", pod_id, (unsigned)node->i2c_addr, kind);
 }
 
 // JSON の文字列として書き出す (" と \ と制御文字をエスケープ。UTF-8 はそのまま)
@@ -326,76 +287,145 @@ static int json_str(char* p, char* end, const char* s)
     return (int)(p - start);
 }
 
+// snprintf の結果を確かめて p を進める。収まらなければ 0 を返して抜ける。
+#define EMIT(...) do { int _n = snprintf(p, end - p, __VA_ARGS__); \
+                       if (_n < 0 || _n >= end - p) return 0; p += _n; } while (0)
+
 uint16_t NM_buildConfigJson(const slave_node_t* node, char* buf, uint16_t bufsize)
 {
     if (bufsize == 0) return 0;
     char* p   = buf;
     char* end = buf + bufsize;
-    int   n;
 
-    // 名前とチャネル記述は保持していないので、ここで子機から読む
+    // 識別・名前・チャネル記述は保持していないので、ここで子機から読む
+    uint8_t id[IDENT_LEN];
+    if (!NM_readIdent(node, id)) return 0;
     char name[NAME_LEN];
     NM_readName(node, name);                        // 読めなければ空文字
-    uint8_t cnt = node->data_count;
+    uint8_t n = node->data_count;
     uint8_t ch[16 * NODE_MAX_VALUES + 2];
-    if (!read_checked(node->i2c_addr, REG_CHDESC, ch, 16 * cnt + 2)) return 0;
-    if (cnt > MQTT_MAX_VALUES) cnt = MQTT_MAX_VALUES;
+    if (!read_checked(node->i2c_addr, REG_CHDESC, ch, 16 * n + 2)) return 0;
 
-    // adr (I²Cアドレス) は PoEMServer 側で BACnet インスタンス番号の基数 (adr×100) に使う
-    n = snprintf(p, end - p, "{\"id\":%lu,\"adr\":%u,\"name\":\"",
-                 (unsigned long)node->device_id, (unsigned)node->i2c_addr);
-    if (n < 0 || n >= end - p) return 0;
-    p += n;
-    n = json_str(p, end, name);
-    if (n < 0) return 0;
-    p += n;
-    n = snprintf(p, end - p, "\",\"cnt\":%u,\"u\":[", (unsigned)cnt);
-    if (n < 0 || n >= end - p) return 0;
-    p += n;
+    // 拡張チャネル属性の flags (積算値・補助値)。無ければ 0
+    uint8_t attr[4 * NODE_MAX_VALUES + 2];
+    bool has_attr = node->prec_bits != 0
+                 && read_checked(node->i2c_addr, REG_EXT_ATTR, attr, 4 * n + 2);
 
-    for (uint8_t i = 0; i < cnt; i++) {
-        n = snprintf(p, end - p, "%s%u", (i == 0 ? "" : ","), (unsigned)get_u16(&ch[16 * i]));
-        if (n < 0 || n >= end - p) return 0;
-        p += n;
+    // uid: 16 B の device_id を 16 進 32 文字で
+    EMIT("{\"uid\":\"");
+    for (uint8_t i = 0; i < 16; i++) EMIT("%02X", id[14 + i]);
+    EMIT("\",\"vendor\":%u,\"model\":%u,\"fw\":\"%u.%u.%u\",\"period\":%u,\"name\":\"",
+         (unsigned)get_u16(&id[4]), (unsigned)get_u16(&id[6]),
+         (unsigned)id[8], (unsigned)id[9], (unsigned)id[10], (unsigned)get_u16(&id[12]));
+    int w = json_str(p, end, name);
+    if (w < 0) return 0;
+    p += w;
+    EMIT("\",\"ch\":[");
+
+    for (uint8_t i = 0; i < n; i++) {
+        const uint8_t* c = &ch[16 * i];
+        char cname[13];
+        memcpy(cname, &c[4], 12);
+        cname[12] = '\0';
+        EMIT("%s{\"n\":\"", (i == 0 ? "" : ","));
+        w = json_str(p, end, cname);
+        if (w < 0) return 0;
+        p += w;
+        EMIT("\",\"u\":%u,\"t\":%u,\"p\":%u,\"f\":%u}",
+             (unsigned)get_u16(&c[0]), (unsigned)c[2],
+             (unsigned)((node->prec_bits >> (4 * i)) & 0x0F),
+             has_attr ? (unsigned)attr[4 * i + 1] : 0u);
     }
-
-    n = snprintf(p, end - p, "]}");
-    if (n < 0 || n >= end - p) return 0;
-    p += n;
+    EMIT("]}");
     return (uint16_t)(p - buf);
 }
 
-uint16_t NM_buildDataJson(const slave_node_t* node, char* buf, uint16_t bufsize)
+// 値 1 つを型どおりに書く。float が有限でなければ 0 を書いて false を返す
+// (呼び出し側でそのチャネルの状態を異常にする)。
+static bool emit_value(char** pp, char* end, const uint8_t* raw, uint8_t type, uint8_t prec)
 {
-    if (bufsize == 0) return 0;
+    char* p = *pp;
+    int   n;
+    bool  ok = true;
+    if (type == VTYPE_INT32) {
+        int32_t x;  memcpy(&x, raw, 4);
+        n = snprintf(p, end - p, "%ld", (long)x);
+    } else if (type == VTYPE_UINT32) {
+        uint32_t x; memcpy(&x, raw, 4);
+        n = snprintf(p, end - p, "%lu", (unsigned long)x);
+    } else {
+        float x;    memcpy(&x, raw, 4);         // AVR は LE なのでそのまま
+        // NaN / Inf を出すと JSON として不正になり、サーバがメッセージ全体を捨てる
+        if (!isfinite(x)) { x = 0.0f; ok = false; }
+        n = snprintf(p, end - p, "%.*g", (int)(prec ? prec : 6), (double)x);
+    }
+    if (n > 0 && n < end - p) *pp = p + n;
+    return ok;
+}
+
+bool NM_pollAndBuildDataJson(slave_node_t* node, char* buf, uint16_t bufsize, uint16_t* len)
+{
+    *len = 0;
+    if (bufsize < 16) return false;
     char* p   = buf;
     char* end = buf + bufsize;
-    int   n;
+    uint8_t n = node->data_count;
+    int k;
 
-    uint8_t cnt = node->data_count;
-    if (cnt > MQTT_MAX_VALUES) cnt = MQTT_MAX_VALUES;
+    uint16_t plen = (uint16_t)(2 + 5 * n + (n & 1) + 2);
+    uint8_t  poll[2 + 5 * NODE_MAX_VALUES + 1 + 2];
 
-    // st: 読めなかったときは 0xFF、それ以外はチャネルごとの異常ビット (8 チャネルぶん)
-    // sq: sample_seq の下位 8bit。進み方が崩れれば、その子機が止まった・再起動したと分かる。
-    unsigned st = node->comm_ok ? (unsigned)(node->stale_mask & 0xFF) : STATUS1_ALL_STALE;
-    n = snprintf(p, end - p, "{\"id\":%lu,\"st\":%u,\"sq\":%u,\"v\":[",
-                 (unsigned long)node->device_id, st, (unsigned)(node->sample_seq & 0xFF));
-    if (n < 0 || n >= end - p) return 0;
-    p += n;
+    // CRC を照合するので、化けたデータはここで捨てられる (v1 の NaN 混入の対策が要らない)。
+    // POLL は番地を指定した瞬間に子機が一括で写し取るので、値が裂けることもない。
+    node->comm_ok = read_checked(node->i2c_addr, REG_POLL, poll, plen);
 
-    for (uint8_t i = 0; i < cnt; i++) {
-        // 値は CRC を通ったものだけを取り込んでいるが、念のため有限でなければ 0 を送る
-        // (NaN を出すと JSON として不正になり、PoEMServer がメッセージ全体を捨てる)
-        float v = isfinite(node->value[i]) ? roundTo6Sigfig(node->value[i]) : 0.0f;
-        n = snprintf(p, end - p, "%s%.6g", (i == 0 ? "" : ","), (double)v);
-        if (n < 0 || n >= end - p) return 0;
-        p += n;
+    if (!node->comm_ok) {
+        // 読めなかった: 全チャネルを通信失敗とし、値は送らない (サーバは前回値を保持する)
+        k = snprintf(p, end - p, "{\"st\":[");
+        if (k < 0 || k >= end - p) return false;
+        p += k;
+        for (uint8_t i = 0; i < n; i++) {
+            k = snprintf(p, end - p, "%s%u", (i == 0 ? "" : ","), ST_COMMUNICATION_FAILURE);
+            if (k < 0 || k >= end - p) return false;
+            p += k;
+        }
+        k = snprintf(p, end - p, "],\"v\":[]}");
+        if (k < 0 || k >= end - p) return false;
+        p += k;
+        *len = (uint16_t)(p - buf);
+        return false;
     }
 
-    n = snprintf(p, end - p, "]}");
-    if (n < 0 || n >= end - p) return 0;
-    p += n;
-    return (uint16_t)(p - buf);
+    // 値を先に書き、有限でない float があればそのチャネルの状態を異常にする
+    uint8_t st[NODE_MAX_VALUES];
+    memcpy(st, &poll[2 + 4 * n], n);
+
+    char  vals[NODE_MAX_VALUES * 14 + 4];
+    char* q    = vals;
+    char* qend = vals + sizeof(vals) - 1;
+    for (uint8_t i = 0; i < n; i++) {
+        if (i) { if (qend - q < 2) return false; *q++ = ','; }
+        uint8_t type = (uint8_t)((node->type_bits >> (2 * i)) & 0x03);
+        uint8_t prec = (uint8_t)((node->prec_bits >> (4 * i)) & 0x0F);
+        if (!emit_value(&q, qend, &poll[2 + 4 * i], type, prec) && st[i] == 0) {
+            st[i] = ST_UNRELIABLE_OTHER;
+        }
+    }
+    *q = '\0';
+
+    k = snprintf(p, end - p, "{\"sq\":%u,\"st\":[", (unsigned)get_u16(&poll[0]));
+    if (k < 0 || k >= end - p) return false;
+    p += k;
+    for (uint8_t i = 0; i < n; i++) {
+        k = snprintf(p, end - p, "%s%u", (i == 0 ? "" : ","), (unsigned)st[i]);
+        if (k < 0 || k >= end - p) return false;
+        p += k;
+    }
+    k = snprintf(p, end - p, "],\"v\":[%s]}", vals);
+    if (k < 0 || k >= end - p) return false;
+    p += k;
+    *len = (uint16_t)(p - buf);
+    return true;
 }
 
 // </editor-fold>

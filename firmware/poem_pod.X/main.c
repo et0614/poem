@@ -8,6 +8,7 @@
 #include <util/atomic.h>
 #include <util/delay_basic.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "main.h"
 #include "hal_io.h"
@@ -21,6 +22,11 @@
 #include "W5500/socket.h"
 #include "W5500/MQTTClient.h" //MQTT通信
 #include "W5500/httpServer.h" //HTTPサーバー
+
+// 親機のファームウェアの版 (poem/<pod>/pod/info で送る)
+#define POD_FW_MAJOR            2
+#define POD_FW_MINOR            0
+#define POD_FW_PATCH            0
 
 // SCAN ボタンのデバウンス用閾値 (ms)。連続して押下を検知するための最小間隔。
 #define SCAN_DEBOUNCE_MS        50
@@ -199,24 +205,53 @@ static bool scanButtonPressed(void)
     return pressed;
 }
 
-// 1 子機分の config トピックを publish する。
-// 名前 (UTF-8 63 B、エスケープで最大約 2 倍) とチャネルの単位が入るので 320 B 確保する。
+// 1 子機分の config を publish する (MQTT v2: poem/<pod>/node/<adr>/config)。
+// 名前 (UTF-8 63 B) と最大 16 チャネルの記述が入るので、1 KB の静的バッファを使う
+// (スタックに置くと深い呼び出しで足りなくなるおそれがある)。
 static void publishConfigOne(slave_node_t* node)
 {
-    char    topic[24];
-    uint8_t payload[320];
+    static char payload[1024];
+    char topic[48];
 
-    NM_buildConfigTopic(node, topic, sizeof(topic));
-    uint16_t len = NM_buildConfigJson(node, (char*)payload, sizeof(payload));
+    NM_buildTopic(node, MA_PodId(), "config", topic, sizeof(topic));
+    uint16_t len = NM_buildConfigJson(node, payload, sizeof(payload));
     if (len == 0) return;
-    MA_publish(topic, payload, len);
+    MA_publish(topic, (const uint8_t*)payload, len);
+    wdt_reset();
+}
+
+// 親機自身の情報を publish する (poem/<pod>/pod/info)。接続のたびに送る。
+// name は Web 画面で設定する親機名 (EEPROM の topic_suffix 欄を使う)。
+static void publishPodInfo(void)
+{
+    char topic[40];
+    char payload[128];
+    const uint8_t* ip = EM_Network_Settings.ip;
+
+    // 親機名は Web 画面で自由に入力されるので、JSON を壊す文字 (" \ 制御文字) を _ に置き換え、
+    // 多バイト文字の途中で切れていれば切り詰める (不正な UTF-8 だとサーバが JSON を読めない)
+    char name[sizeof(EM_Network_Settings.topic_suffix)];
+    strncpy(name, EM_Network_Settings.topic_suffix, sizeof(name) - 1);
+    name[sizeof(name) - 1] = '\0';
+    for (char* c = name; *c; c++) {
+        if (*c == '"' || *c == '\\' || (uint8_t)*c < 0x20) *c = '_';
+    }
+    NM_truncateUtf8(name, (uint16_t)(strlen(name)));
+
+    snprintf(topic, sizeof(topic), "poem/%s/pod/info", MA_PodId());
+    int len = snprintf(payload, sizeof(payload),
+                       "{\"fw\":\"%u.%u.%u\",\"name\":\"%s\",\"ip\":\"%u.%u.%u.%u\"}",
+                       POD_FW_MAJOR, POD_FW_MINOR, POD_FW_PATCH,
+                       name,
+                       ip[0], ip[1], ip[2], ip[3]);
+    if (len <= 0 || (size_t)len >= sizeof(payload)) return;
+    MA_publish(topic, (const uint8_t*)payload, (uint16_t)len);
     wdt_reset();
 }
 
 // pod 自身の I2C 状態を publish する。
 //
-// サーバはトピックを判定する前に受信メッセージを無条件でログ出力し、nodes/config/ と
-// nodes/data/ 以外は無視する。したがってサーバを改修しなくてもこのトピックはログに残る。
+// トピックは poem/<pod>/pod/diag。PoEMServer はこれをログに出すだけで、判定には使わない。
 // バス固着が再発したときに MSTATUS と復帰回数を確認するための診断用。
 //
 // フィールドの意味:
@@ -245,7 +280,9 @@ static void publishDiag(void)
     // 過去に NaN で JSON を壊した経験があるので、ここでも落としておく。
     if (len <= 0 || (size_t)len >= sizeof(payload)) return;
 
-    MA_publish("nodes/diag/pod", (const uint8_t*)payload, (uint16_t)len);
+    char topic[40];
+    snprintf(topic, sizeof(topic), "poem/%s/pod/diag", MA_PodId());
+    MA_publish(topic, (const uint8_t*)payload, (uint16_t)len);
     wdt_reset();
 }
 
@@ -261,6 +298,7 @@ static void publishAllConfigs(void)
 static void handleScanRequest(void)
 {
     blinkGreenLED(1);
+    publishPodInfo();
     NM_scan();
     publishAllConfigs();
     blinkGreenLED(2);
@@ -289,39 +327,37 @@ static void checkNodeDiag(slave_node_t* node)
     node->err_sensor = es;
     if (!changed || first) return;
 
-    char    topic[24];
-    uint8_t payload[96];
-    int tlen = snprintf(topic, sizeof(topic), "nodes/diag/%lu", (unsigned long)node->device_id);
-    if (tlen <= 0 || (size_t)tlen >= sizeof(topic)) return;
+    char    topic[48];
+    uint8_t payload[80];
+    NM_buildTopic(node, MA_PodId(), "diag", topic, sizeof(topic));
 
     int len = snprintf((char*)payload, sizeof(payload),
-                       "{\"id\":%lu,\"err\":%u,\"serr\":%u,\"up\":%lu,\"rc\":%u}",
-                       (unsigned long)node->device_id, (unsigned)ei, (unsigned)es,
-                       (unsigned long)up, (unsigned)rc);
+                       "{\"up\":%lu,\"rc\":%u,\"err\":%u,\"serr\":%u}",
+                       (unsigned long)up, (unsigned)rc, (unsigned)ei, (unsigned)es);
     if (len <= 0 || (size_t)len >= sizeof(payload)) return;
 
     MA_publish(topic, payload, (uint16_t)len);
     wdt_reset();
 }
 
-// 1 ノードを poll → JSON 生成 → publish。
-// 読めなかったとき (I2C 失敗、CRC 不一致) は st = 0xFF とし、値は前回値のまま publish する
-// (リストからは外さず、生存確認のため publish を続ける)。
+// 1 ノードの POLL を読み、その場で data を publish する (poem/<pod>/node/<adr>/data)。
+// 読めなかったとき (I2C 失敗、CRC 不一致) は全チャネルを通信失敗 (12) とし、値は送らない。
+// リストからは外さず、生存確認のため publish を続ける。
 static void pollAndPublishOne(slave_node_t* node)
 {
-    char    topic[24];
-    uint8_t payload[256];
+    char topic[48];
+    char payload[384];      // 16 チャネル: 値 14 字 × 16 + 状態 3 字 × 16 + 枠 ≒ 300 字
 
-    bool was_ok = node->comm_ok;
-    if (!NM_pollOne(node)) {
+    bool     was_ok = node->comm_ok;
+    uint16_t len;
+    if (!NM_pollAndBuildDataJson(node, payload, sizeof(payload), &len)) {
         // 読めなくなった瞬間だけ数える (毎周期数えると、抜いている時間の長さが件数になる)
         if (was_ok) I2C_CountNodeLost();
     }
 
-    NM_buildDataTopic(node, topic, sizeof(topic));
-    uint16_t len = NM_buildDataJson(node, (char*)payload, sizeof(payload));
+    NM_buildTopic(node, MA_PodId(), "data", topic, sizeof(topic));
     if (len > 0) {
-        MA_publish(topic, payload, len);
+        MA_publish(topic, (const uint8_t*)payload, len);
     }
 }
 

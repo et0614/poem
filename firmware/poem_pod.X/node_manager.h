@@ -2,7 +2,7 @@
  * File:   node_manager.h
  * Author: e.togashi
  *
- * 子機リストの管理、I²C 走査、共通レジスタ v2 へのアクセスを担う。
+ * 子機リストの管理、I²C 走査、共通レジスタ v2 へのアクセス、MQTT v2 の JSON の組み立て。
  */
 
 #ifndef NODE_MANAGER_H
@@ -37,9 +37,8 @@ uint8_t NM_scan(void);
 // 戻り値: 新規に追加した子機の数。
 uint8_t NM_scanNewNodes(void);
 
-// POLL を読み、計測値・状態・sample_seq を更新する。
-// 戻り値: true = 読めて CRC も一致、false = 通信失敗または CRC 不一致 (読み直し込み)。
-bool NM_pollOne(slave_node_t* node);
+// 識別区画を読む (CRC 確認済み)。buf は IDENT_LEN バイト。
+bool NM_readIdent(const slave_node_t* node, uint8_t* buf);
 
 // 名前を子機から読む。buf は NAME_LEN バイト以上。失敗なら false (buf は空文字)。
 bool NM_readName(const slave_node_t* node, char* buf);
@@ -57,18 +56,22 @@ bool NM_writeAddress(slave_node_t* node, uint8_t new_addr);
 bool NM_readExtStatus(const slave_node_t* node, uint32_t* uptime_s, uint8_t* reset_cause,
                       uint16_t* err_i2c, uint16_t* err_sensor);
 
-// MQTT トピック生成ヘルパ。"nodes/config/{id}" / "nodes/data/{id}"。
-void NM_buildConfigTopic(const slave_node_t* node, char* buf, uint16_t bufsize);
-void NM_buildDataTopic  (const slave_node_t* node, char* buf, uint16_t bufsize);
+// ===== MQTT v2 (トピックは "poem/<親機ID>/node/<adr>/...") =====================
 
-// config トピック向け JSON ({id, adr, name, cnt, u})。名前とチャネル記述は子機から読む。
+// "poem/<pod>/node/<adr>/<kind>" を作る。kind = "config" / "data" / "diag"。
+void NM_buildTopic(const slave_node_t* node, const char* pod_id, const char* kind,
+                   char* buf, uint16_t bufsize);
+
+// config: {"uid","vendor","model","fw","name","period","ch":[{"n","u","t","p","f"},…]}
+// 識別・名前・チャネル記述・拡張チャネル属性を子機から読んで組み立てる。
 // 戻り値: 書き込まれたバイト数 (NUL 終端は含まない)。失敗時は 0。
 uint16_t NM_buildConfigJson(const slave_node_t* node, char* buf, uint16_t bufsize);
 
-// data トピック向け JSON ({id, st, sq, v})。現行の形式との互換:
-//   st = チャネルごとの異常ビット (読めなかったときは 0xFF)、sq = sample_seq の下位 8bit
-// 戻り値: 書き込まれたバイト数。失敗時は 0。
-uint16_t NM_buildDataJson(const slave_node_t* node, char* buf, uint16_t bufsize);
+// data: POLL を読み、その場で {"sq","st":[…],"v":[…]} を組み立てる。
+// 読めなかったとき (I2C 失敗・CRC 不一致) は {"st":[12,…],"v":[]} を組み立て、false を返す。
+// 値は型どおりに出す (整数型は整数のまま、float は有効桁数で丸める)。
+// *len に書き込んだバイト数を返す (組み立てられなければ 0)。
+bool NM_pollAndBuildDataJson(slave_node_t* node, char* buf, uint16_t bufsize, uint16_t* len);
 
 // UTF-8 文字列を max_bytes 以内に切り詰める (多バイト文字の途中では切らない)
 void NM_truncateUtf8(char* s, uint16_t max_bytes);

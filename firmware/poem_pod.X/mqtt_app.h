@@ -55,6 +55,10 @@ void MA_yield(uint32_t timeout_ms);
 // 戻り値: true = MQTTPublish 成功、false = 失敗 (上位で再接続トリガ)。
 bool MA_publish(const char* topic, const uint8_t* payload, uint16_t payload_len);
 
+// 親機 ID。MAC アドレスの 12 桁の 16 進 (例 "0008DC030133")。
+// MQTT のトピック "poem/<親機ID>/..." に使い、PoEMServer はこれで親機を区別する。
+const char* MA_PodId(void);
+
 
 #ifdef	__cplusplus
 }

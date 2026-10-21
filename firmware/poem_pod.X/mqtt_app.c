@@ -71,6 +71,18 @@ void MA_initW5500(void)
     applyNetworkInfo();
 }
 
+const char* MA_PodId(void)
+{
+    static char id[13] = "";
+    if (id[0] == '\0') {
+        uint8_t mac[6];
+        buildMacAddress(mac);
+        snprintf(id, sizeof(id), "%02X%02X%02X%02X%02X%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
+    return id;
+}
+
 // MQTT クライアント ID は装置固有である必要がある。MAC アドレスを 16 進文字列化。
 static void buildClientId(char* buf, size_t bufsize)
 {

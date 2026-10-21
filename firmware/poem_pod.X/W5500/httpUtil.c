@@ -129,7 +129,7 @@ uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * uri, uint8_t 
             "<label>DNS: <input type=text name=dns value=%u.%u.%u.%u></label>"
             "<h3>MQTT</h3>"
             "<label>Broker IP: <input type=text name=bip value=%u.%u.%u.%u></label>"
-            "<label>Topic suffix: <input type=text name=topic value=%s maxlength=20></label>"
+            "<label>Pod name: <input type=text name=topic value=%s maxlength=20></label>"
             "<p><input type=submit value=Save></p>"
             "</form>"
             "<p><a href=/>Back</a></p>"
@@ -190,7 +190,7 @@ uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * uri, uint8_t 
             "<h3>Detected Devices (%u)</h3>"
             "<p style=\"font-size:11px;color:#666\">Addr is decimal (8-119 = 0x08-0x77). Changes take effect immediately.</p>"
             "<form method=post action=/devices.cgi>"
-            "<table><tr><th>#<th>Addr<th>DeviceID<th>Stale<th>N<th>Name</tr>",
+            "<table><tr><th>#<th>Addr<th>Model<th>UID<th>I2C<th>N<th>Name</tr>",
             (unsigned)NM_NodeCount);
         if (n < 0 || n >= end - p) { *len = 0; return 0; }
         p += n;
@@ -203,19 +203,23 @@ uint8_t predefined_get_cgi_processor(uint8_t * uri_name, uint8_t * uri, uint8_t 
             if ((end - p) < 600) break;
             const slave_node_t* nd = &NM_Nodes[i];
 
-            // 名前は保持していないので子機から読む (UTF-8、63 byte まで)
+            // 名前と識別は保持していないので子機から読む (UTF-8、63 byte まで)
             char name[NAME_LEN];
             NM_readName(nd, name);
+            uint8_t id[IDENT_LEN];
+            bool id_ok = NM_readIdent(nd, id);
 
+            // UID は 16 B のうち末尾 4 B だけを出す (一覧で個体を見分けるには十分)
             n = snprintf(p, end - p,
                 "<tr><td>%u"
                 "<td><input type=number name=a%02u value=%u min=8 max=119>"
-                "<td>%lu<td>%s%X<td>%u"
+                "<td>%04X<td>..%02X%02X%02X%02X<td>%s<td>%u"
                 "<td><input type=text name=n%02u maxlength=63 value=\"",
                 (unsigned)i,
                 (unsigned)i, (unsigned)nd->i2c_addr,
-                (unsigned long)nd->device_id,
-                nd->comm_ok ? "0x" : "-", (unsigned)(nd->comm_ok ? nd->stale_mask : 0),
+                id_ok ? (unsigned)(id[6] | (id[7] << 8)) : 0u,
+                id_ok ? id[26] : 0, id_ok ? id[27] : 0, id_ok ? id[28] : 0, id_ok ? id[29] : 0,
+                id_ok ? "OK" : "NG",
                 (unsigned)nd->data_count,
                 (unsigned)i);
             if (n < 0 || n >= end - p) break;
