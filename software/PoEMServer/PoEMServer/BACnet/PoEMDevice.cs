@@ -5,40 +5,35 @@ using BaCSharp;
 namespace PoEMServer.BACnet
 {
     /// <summary>
-    /// PoEM 親機 (poem_pod) からの MQTT publish を BACnet オブジェクトへ反映する。
+    /// 親機 (poem_pod) 1 台ぶんの BACnet Device。MQTT v2 のメッセージを BACnet オブジェクトへ反映する。
     ///
-    /// 子機は親機の SCAN 時に "nodes/config/&lt;id&gt;" で固定情報 (I2cAddr/DataCount/UnitType/Name) を、
-    /// 毎秒 "nodes/data/&lt;id&gt;" で計測値を publish する。本クラスは:
-    ///   - 初めて受信した I²C アドレスについては BACnet オブジェクトを動的に生成。
-    ///     OBJECT_LIST はストレージから自動生成される。
-    ///   - 既知の子機については data 受信のたびに PRESENT_VALUE を更新。
+    /// 親機ごとに Device を分ける (Device インスタンス番号と UDP ポートは PodRegistry が決める)。
+    /// 子機は親機の走査時に config を、毎秒 data を publish する。本クラスは:
+    ///   - 初めて受け取った I²C アドレスについては BACnet オブジェクトを動的に生成する
+    ///   - 既知の子機については data を受け取るたびに PRESENT_VALUE を更新する
     ///
     /// BACnet インスタンス番号は子機の I²C アドレスから固定的に決まる (base = adr × 100):
-    ///   - アドレス範囲 8..119 → base 800..11900。0..99 はデバイス自身用に予約。
-    ///   - 管理単位は「アドレス = 物理配置」。センサを故障交換して同アドレスに別個体を
-    ///     付けてもインスタンス番号は変わらず、DeviceID はプロパティとして更新される。
-    ///   - 子機のアドレスを変更した場合は旧 base のオブジェクトを撤去し、新 base に再生成する。
-    ///
-    /// フォールバック (レガシー方式): adr フィールドを持たない旧ファーム親機の config に対しては、
-    /// DeviceID → InstanceBase の対応テーブルで 12000 番台から 100 刻みに発番する。対応は
-    /// LegacyInstanceMap.json (実行ファイルと同じフォルダ) に永続化され、サーバ再起動後も
-    /// 同じ DeviceID には同じ番号が割り当てられる。同じ DeviceID が後に adr 付き config で
-    /// 現れた場合 (親機のファーム更新) は adr 方式へ移行し、レガシー割当は破棄される。
+    ///   - アドレス範囲 8..119 → base 800..11900。0..99 はデバイス自身用に予約
+    ///   - 管理単位は「親機内のアドレス = 物理配置」。センサを故障交換して同じアドレスに
+    ///     別個体を付けてもインスタンス番号は変わらず、UID がプロパティとして更新される
+    ///   - 子機のアドレスを変更した場合は旧 base のオブジェクトを撤去し、新 base に再生成する
     ///
     /// オブジェクト割当 (base = adr × 100):
     ///   base+0   DateTimeValue    最終受信日時
-    ///   base+1   CharStringValue  DeviceID (FNV-1a 22bit、個体識別)
-    ///   base+2   CharStringValue  Name (子機 EEPROM 由来)
-    ///   base+3   AnalogInput      Status1 (生 bitmask)
-    ///   base+4   AnalogInput      Seq (子機が数えた計測回数)
-    ///   base+5   AnalogInput      DataCount
-    ///   base+6   DateTimeValue    最終正常データ受信日時 (status1==0x00 のときのみ更新)
-    ///   base+10..base+17  AnalogInput  value[0..7] (UNITS は config の u[i] から)
+    ///   base+1   CharStringValue  UID (16 B の device_id、16 進 32 文字)
+    ///   base+2   CharStringValue  名前 (子機の EEPROM に保存されている呼び名)
+    ///   base+3   AnalogInput      異常チャネルのビット (bit i = チャネル i の状態が正常でない)
+    ///   base+4   AnalogInput      sample_seq
+    ///   base+5   AnalogInput      チャネル数
+    ///   base+6   DateTimeValue    最終正常データ受信日時 (全チャネルが正常のときだけ更新)
+    ///   base+7   CharStringValue  機種 (名前と model_id)
+    ///   base+8   CharStringValue  子機のファームウェアの版
+    ///   base+9   AnalogInput      子機の稼働時間 [s] (拡張ステータスを持つ子機のみ更新)
+    ///   base+10..base+25  AnalogInput  チャネル 0..15 (UNITS はチャネル記述の単位)
     ///
-    /// 子機が I²C 不達になると親機は最終値を stale フラグ (status1 の該当 bit) 付きで
-    /// publish し続ける。本クラスはこれを BACnet の作法へ写す: 該当 value オブジェクトの
-    /// PRESENT_VALUE は最終有効値のまま凍結し、STATUS_FLAGS の FAULT ビットと
-    /// RELIABILITY (COMMUNICATION_FAILURE) で「値が信頼できない」ことを示す。
+    /// チャネルの状態は子機が BACnet Reliability の値で送ってくる (0 = 正常、12 = 通信失敗、
+    /// 64 = 準備中 など)。正常でないチャネルは PRESENT_VALUE を最終有効値のまま凍結し、
+    /// STATUS_FLAGS の FAULT ビットと RELIABILITY でそれを示す。
     /// </summary>
     internal class PoEMDevice
     {
@@ -48,7 +43,6 @@ namespace PoEMServer.BACnet
         /// DATETIME を文字列で持つときの書式。ライブラリ (System.IO.BACnet.Storage.Property) が
         /// ParseExact("yyyy/MM/dd-HH:mm:ss.ff") で読むため、これに一致させる必要がある
         /// (bacnet-stack 互換。小数部はミリ秒ではなく 1/100 秒の 2 桁)。
-        /// 一致しないと解析に失敗し、base64 フォールバックも外れて PRESENT_VALUE が null になる。
         /// 小数部は <see cref="FormatDateTime"/> で付加する。
         /// </summary>
         private const string DATE_TIME_FORMAT = "yyyy/MM/dd-HH:mm:ss.";
@@ -56,21 +50,27 @@ namespace PoEMServer.BACnet
         /// <summary>子機 1 つあたりの BACnet Instance 番号確保枠 (base = I²Cアドレス × この値)</summary>
         private const uint INSTANCE_BLOCK = 100;
 
-        /// <summary>1 子機が公開できる計測値の上限 (firmware 仕様と同じ)</summary>
-        private const int MAX_VALUES_PER_NODE = 8;
+        /// <summary>1 子機が公開できるチャネルの上限 (OSL 共通レジスタ v2 と同じ)</summary>
+        private const int MAX_VALUES_PER_NODE = 16;
 
         /// <summary>I²C アドレスの有効範囲 (firmware の走査範囲と同じ)</summary>
         private const byte I2C_ADDR_MIN = 0x08;
         private const byte I2C_ADDR_MAX = 0x77;
 
-        /// <summary>
-        /// レガシー (adr 無し config) 子機の最初の base 番号。adr 方式の最大値
-        /// (119×100+99 = 11999) と重ならないよう 12000 から 100 刻みに発番する。
-        /// </summary>
-        private const uint LEGACY_FIRST_INSTANCE_BASE = 12000;
+        private const ushort BACNET_UNITS_NO_UNITS = 95;
+        private const ushort BACNET_UNITS_SECONDS  = 73;
+        private const uint   BACNET_RELIABILITY_NO_FAULT_DETECTED = 0;
 
-        /// <summary>レガシー子機の DeviceID → InstanceBase 対応を永続化するファイル名</summary>
-        private const string LEGACY_MAP_FILE = "LegacyInstanceMap.json";
+        /// <summary>機種の表示名 (仕様 §6.1)</summary>
+        private static readonly Dictionary<ushort, string> MODEL_NAMES = new()
+        {
+            [0x0101] = "温湿度センサ (SHT4x)",
+            [0x0102] = "多点温度センサ (TMP117x3)",
+            [0x0201] = "風速センサ (熱線式)",
+            [0x0301] = "絶対圧センサ (BMP585)",
+            [0x0302] = "差圧センサ (SDP810-125Pa)",
+            [0x0303] = "差圧センサ (SDP810-500Pa)",
+        };
 
         #endregion
 
@@ -78,20 +78,11 @@ namespace PoEMServer.BACnet
 
         public BACnetCommunicator Communicator { get; private set; }
 
-        /// <summary>I²C アドレス → ChildNode の登録表 (adr 方式の主キー)</summary>
+        /// <summary>親機 ID (MAC アドレス 12 桁)</summary>
+        public string PodId { get; }
+
+        /// <summary>I²C アドレス → ChildNode の登録表</summary>
         private readonly Dictionary<byte, ChildNode> childrenByAddr = new();
-
-        /// <summary>DeviceID → ChildNode (data 受信時の引き当て。adr 方式・レガシー方式の両方が入る)</summary>
-        private readonly Dictionary<uint, ChildNode> childrenById = new();
-
-        /// <summary>レガシー子機の DeviceID → InstanceBase 対応表 (LegacyInstanceMap.json に永続化)</summary>
-        private readonly Dictionary<uint, uint> legacyBases = new();
-
-        /// <summary>次にレガシー子機へ割り当てる base instance</summary>
-        private uint nextLegacyBase = LEGACY_FIRST_INSTANCE_BASE;
-
-        /// <summary>レガシー対応表の保存先パス</summary>
-        private readonly string legacyMapPath;
 
         /// <summary>storage / children を保護するロック</summary>
         private readonly object syncLock = new();
@@ -100,213 +91,131 @@ namespace PoEMServer.BACnet
 
         #region コンストラクタ
 
-        public PoEMDevice(int exclusivePort, string localEndPointAddress)
+        /// <param name="podId">親機 ID (MAC アドレス 12 桁)</param>
+        /// <param name="templatePath">Device オブジェクトのひな形 (PoEMDeviceStorage.xml)</param>
+        /// <param name="deviceInstance">この親機の BACnet Device インスタンス番号</param>
+        /// <param name="exclusivePort">この親機の BACnet/IP の専用ポート</param>
+        /// <param name="localEndPointAddress">BACnet/IP で使う自分の IP アドレス</param>
+        public PoEMDevice(string podId, string templatePath, uint deviceInstance, int exclusivePort, string localEndPointAddress)
         {
-            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PoEMDeviceStorage.xml");
-            DeviceStorage storage = DeviceStorage.Load(path);
+            PodId = podId;
+            DeviceStorage storage = DeviceStorage.Load(templatePath, deviceInstance);
             Communicator = new BACnetCommunicator(storage, exclusivePort, localEndPointAddress);
-
-            legacyMapPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, LEGACY_MAP_FILE);
-            LoadLegacyMap();
+            SetDeviceName($"PoEM_{podId}");
         }
 
         #endregion
 
         #region 公開メソッド
 
-        /// <summary>
-        /// "nodes/config/&lt;id&gt;" 受信時の処理。adr の有無で adr 方式 / レガシー方式に振り分ける。
-        /// </summary>
-        public void OnConfig(NodeConfigPayload config)
+        /// <summary>poem/&lt;pod&gt;/pod/info: 親機名を Device の名前に反映する</summary>
+        public void OnPodInfo(PodInfoPayload info)
         {
             lock (syncLock)
             {
-                if (config.I2cAddr < I2C_ADDR_MIN || config.I2cAddr > I2C_ADDR_MAX)
-                    OnConfigLegacy(config);     // adr フィールドを持たない旧ファーム
-                else
-                    OnConfigAddressed(config);  // adr 対応ファーム (base = adr×100)
+                string name = string.IsNullOrWhiteSpace(info.Name) ? PodId : info.Name.Trim();
+                SetDeviceName($"PoEM_{name}");
             }
-        }
-
-        /// <summary>adr 対応ファームの config 処理。新規アドレスならオブジェクト生成、既知なら変更を反映。</summary>
-        private void OnConfigAddressed(NodeConfigPayload config)
-        {
-            byte adr = config.I2cAddr;
-
-            // この DeviceID がレガシー方式で登録済み → 親機のファーム更新。adr 方式へ移行する。
-            if (childrenById.TryGetValue(config.Id, out ChildNode? prev) && prev.I2cAddr == 0)
-            {
-                Console.WriteLine($"[INFO] id={config.Id}: firmware now reports I2C address {adr}. Migrating from legacy instance {prev.InstanceBase} to {adr * INSTANCE_BLOCK}.");
-                RemoveBacnetObjects(prev);
-                childrenById.Remove(config.Id);
-                if (legacyBases.Remove(config.Id)) SaveLegacyMap();
-                prev = null;
-            }
-
-            // 同じ DeviceID が別アドレスで登録済み → 子機のアドレス変更。旧ブロックを撤去して再生成する。
-            if (prev != null && prev.I2cAddr != adr)
-            {
-                Console.WriteLine($"[INFO] id={config.Id} moved from I2C address {prev.I2cAddr} to {adr}. Rebuilding BACnet objects.");
-                RemoveBacnetObjects(prev);
-                childrenByAddr.Remove(prev.I2cAddr);
-                childrenById.Remove(config.Id);
-            }
-
-            if (!childrenByAddr.TryGetValue(adr, out ChildNode? child))
-            {
-                child = new ChildNode
-                {
-                    I2cAddr = adr,
-                    DeviceId = config.Id,
-                    InstanceBase = adr * INSTANCE_BLOCK,
-                    Name = config.Name ?? "",
-                    DataCount = Math.Clamp(config.DataCount, 0, MAX_VALUES_PER_NODE),
-                    UnitTypes = SanitizeUnits(config.UnitTypes),
-                };
-                childrenByAddr[adr] = child;
-                childrenById[config.Id] = child;
-
-                CreateBacnetObjects(child);
-                return;
-            }
-
-            // 既知アドレスの config 再受信
-            string newName = config.Name ?? "";
-            int newCnt = Math.Clamp(config.DataCount, 0, MAX_VALUES_PER_NODE);
-            ushort[] newUnits = SanitizeUnits(config.UnitTypes);
-
-            // 同アドレスに別個体 (センサ交換) または計測値数の変更 → オブジェクト構成が
-            // 変わりうるのでブロックごと再生成する。インスタンス番号はアドレス基準なので不変。
-            if (child.DeviceId != config.Id || newCnt != child.DataCount)
-            {
-                if (child.DeviceId != config.Id)
-                    Console.WriteLine($"[INFO] I2C address {adr}: device replaced (id {child.DeviceId} -> {config.Id}). Rebuilding BACnet objects.");
-
-                RemoveBacnetObjects(child);
-                childrenById.Remove(child.DeviceId);
-
-                child.DeviceId = config.Id;
-                child.Name = newName;
-                child.DataCount = newCnt;
-                child.UnitTypes = newUnits;
-                childrenById[config.Id] = child;
-
-                CreateBacnetObjects(child);
-                return;
-            }
-
-            UpdateNameAndUnits(child, newName, newUnits);
         }
 
         /// <summary>
-        /// レガシー (adr 無し) config の処理。DeviceID をキーに、永続対応表 (LegacyInstanceMap.json)
-        /// から InstanceBase を引き当てる。未知の DeviceID には 12000 番台から順に発番して保存する。
+        /// poem/&lt;pod&gt;/node/&lt;adr&gt;/config: 新規アドレスならオブジェクトを生成し、既知なら変更を反映する。
         /// </summary>
-        private void OnConfigLegacy(NodeConfigPayload config)
+        public void OnConfig(byte adr, NodeConfigPayload config)
         {
-            string newName = config.Name ?? "";
-            int newCnt = Math.Clamp(config.DataCount, 0, MAX_VALUES_PER_NODE);
-            ushort[] newUnits = SanitizeUnits(config.UnitTypes);
-
-            if (childrenById.TryGetValue(config.Id, out ChildNode? child))
+            if (adr < I2C_ADDR_MIN || adr > I2C_ADDR_MAX) return;
+            lock (syncLock)
             {
-                if (child.I2cAddr != 0) return;  // adr 方式で登録済みの個体からの旧形式 config は無視 (通常あり得ない)
+                var channels = SanitizeChannels(config.Channels);
 
-                // 計測値数の変更はオブジェクト構成が変わるのでブロックごと再生成 (番号は不変)
-                if (newCnt != child.DataCount)
+                // 同じ UID が別アドレスで登録済み → 子機のアドレス変更。旧ブロックを撤去する。
+                var moved = childrenByAddr.Values.FirstOrDefault(c => c.Uid == config.Uid && c.I2cAddr != adr);
+                if (moved != null)
                 {
-                    RemoveBacnetObjects(child);
-                    child.Name = newName;
-                    child.DataCount = newCnt;
-                    child.UnitTypes = newUnits;
+                    Console.WriteLine($"[INFO] pod {PodId}: uid {config.Uid} moved from I2C address {moved.I2cAddr} to {adr}. Rebuilding BACnet objects.");
+                    RemoveBacnetObjects(moved);
+                    childrenByAddr.Remove(moved.I2cAddr);
+                }
+
+                if (!childrenByAddr.TryGetValue(adr, out ChildNode? child))
+                {
+                    child = new ChildNode { I2cAddr = adr, InstanceBase = adr * INSTANCE_BLOCK };
+                    child.Apply(config, channels);
+                    childrenByAddr[adr] = child;
                     CreateBacnetObjects(child);
                     return;
                 }
 
-                UpdateNameAndUnits(child, newName, newUnits);
-                return;
-            }
+                // 同じアドレスに別個体 (センサ交換) または構成の変化 → オブジェクトを作り直す。
+                // インスタンス番号はアドレス基準なので変わらない。
+                if (child.Uid != config.Uid || !child.SameLayout(channels))
+                {
+                    if (child.Uid != config.Uid)
+                        Console.WriteLine($"[INFO] pod {PodId}: I2C address {adr}: device replaced ({child.Uid} -> {config.Uid}). Rebuilding BACnet objects.");
+                    RemoveBacnetObjects(child);
+                    child.Apply(config, channels);
+                    CreateBacnetObjects(child);
+                    return;
+                }
 
-            // 新規レガシー子機: 永続対応表から番号を引く。無ければ発番して保存。
-            if (!legacyBases.TryGetValue(config.Id, out uint instanceBase))
-            {
-                instanceBase = nextLegacyBase;
-                nextLegacyBase += INSTANCE_BLOCK;
-                legacyBases[config.Id] = instanceBase;
-                SaveLegacyMap();
-                Console.WriteLine($"[INFO] legacy config (no adr) for id={config.Id}: assigned instance base {instanceBase} (persisted).");
-            }
-
-            child = new ChildNode
-            {
-                I2cAddr = 0,   // 0 = レガシー (アドレス不明)
-                DeviceId = config.Id,
-                InstanceBase = instanceBase,
-                Name = newName,
-                DataCount = newCnt,
-                UnitTypes = newUnits,
-            };
-            childrenById[config.Id] = child;
-
-            CreateBacnetObjects(child);
-        }
-
-        /// <summary>Name / UnitType の変更だけを既存オブジェクトへ反映する (構成不変の場合)。</summary>
-        private void UpdateNameAndUnits(ChildNode child, string newName, ushort[] newUnits)
-        {
-            if (newName != child.Name)
-            {
-                child.Name = newName;
-                WriteCharString(child.InstanceBase + 2u, child.Name);
-            }
-            if (!UnitsEqual(child.UnitTypes, newUnits))
-            {
-                child.UnitTypes = newUnits;
-                UpdateValueUnits(child);
+                // 構成は同じ: 名前・機種・版だけを更新する
+                string oldName = child.Name;
+                child.Apply(config, channels);
+                if (oldName != child.Name) WriteCharString(child.InstanceBase + 2u, child.Name);
+                WriteCharString(child.InstanceBase + 7u, ModelLabel(child.Model));
+                WriteCharString(child.InstanceBase + 8u, child.Firmware);
             }
         }
 
         /// <summary>
-        /// "nodes/data/&lt;id&gt;" 受信時の処理。config 未受信の DeviceID は無視 (config 待ち)。
+        /// poem/&lt;pod&gt;/node/&lt;adr&gt;/data: 計測値と状態を反映する。config 未受信のアドレスは無視する (config 待ち)。
         /// </summary>
-        public void OnData(NodeDataPayload data)
+        public void OnData(byte adr, NodeDataPayload data)
         {
             lock (syncLock)
             {
-                if (!childrenById.TryGetValue(data.Id, out ChildNode? child)) return;
+                if (!childrenByAddr.TryGetValue(adr, out ChildNode? child)) return;
 
                 uint b = child.InstanceBase;
+                int n = child.Channels.Length;
+                DateTime now = DateTime.Now;
 
-                WriteDateTime(b + 0u, DateTime.Now);
-                if (data.Status1 == 0x00)
-                {
-                    // 全計測値が有効なデータのみ「最終正常データ受信日時」を進める
-                    WriteDateTime(b + 6u, DateTime.Now);
-                }
-                WriteAnalogInput(b + 3u, data.Status1);
-                WriteAnalogInput(b + 4u, data.Seq);
+                WriteDateTime(b + 0u, now);
 
-                int n = Math.Min(child.DataCount, data.Values?.Length ?? 0);
+                // 状態 (無いチャネルは通信失敗とみなす)
+                uint faults = 0;
                 for (int i = 0; i < n; i++)
                 {
-                    WriteAnalogInput(b + 10u + (uint)i, data.Values![i]);
-                }
-
-                // status1 (per-value の stale bitmask) の変化分だけ FAULT / RELIABILITY を更新する。
-                // 毎秒書き換えると COV 通知やストレージ書込が無駄に走るため、変化時のみ。
-                if (data.Status1 != child.LastStatus1)
-                {
-                    for (int i = 0; i < child.DataCount; i++)
+                    uint st = i < data.Status.Length ? data.Status[i] : 12u;
+                    if (st != 0) faults |= 1u << i;
+                    if (st != child.LastStatus[i])
                     {
-                        bool wasFault = ((child.LastStatus1 >> i) & 1) != 0;
-                        bool isFault = ((data.Status1 >> i) & 1) != 0;
-                        if (wasFault != isFault)
-                        {
-                            WriteValueFault(b + 10u + (uint)i, isFault);
-                        }
+                        WriteValueFault(b + 10u + (uint)i, st);
+                        child.LastStatus[i] = st;
                     }
-                    child.LastStatus1 = data.Status1;
                 }
+                WriteAnalogInput(b + 3u, faults);
+                if (faults == 0) WriteDateTime(b + 6u, now);
+
+                if (data.Seq.HasValue) WriteAnalogInput(b + 4u, data.Seq.Value);
+
+                // 値 (親機が子機を読めなかったときは空。PRESENT_VALUE は前回値のまま)。
+                // 状態が正常でないチャネルは値を更新せず、最終有効値のまま凍結する。
+                int nv = Math.Min(n, data.Values.Length);
+                for (int i = 0; i < nv; i++)
+                {
+                    if (child.LastStatus[i] == 0) WriteAnalogInput(b + 10u + (uint)i, data.Values[i]);
+                }
+            }
+        }
+
+        /// <summary>poem/&lt;pod&gt;/node/&lt;adr&gt;/diag: 稼働時間を反映する</summary>
+        public void OnDiag(byte adr, NodeDiagPayload diag)
+        {
+            lock (syncLock)
+            {
+                if (!childrenByAddr.TryGetValue(adr, out ChildNode? child)) return;
+                WriteAnalogInput(child.InstanceBase + 9u, diag.UptimeSec);
             }
         }
 
@@ -319,28 +228,31 @@ namespace PoEMServer.BACnet
             uint b = child.InstanceBase;
             string disp = DisplayName(child);
 
-            // オブジェクトは STATUS_FLAGS="0000" / RELIABILITY=0 で生成されるため、フォルト追跡もリセット
-            child.LastStatus1 = 0x00;
+            // オブジェクトは STATUS_FLAGS="0000" / RELIABILITY=0 で生成されるため、状態の追跡もリセット
+            System.Array.Fill(child.LastStatus, 0u);
 
-            AddDateTimeValue(b + 0u, $"{disp}_DT", $"Last data publish time of {disp}", DateTime.Now);
-            AddCharString  (b + 1u, $"{disp}_ID", $"DeviceID (FNV-1a 22bit) of {disp}", $"{child.DeviceId}");
-            AddCharString  (b + 2u, $"{disp}_NAME", $"Configured label of {disp}", child.Name);
-            AddAnalogInput (b + 3u, $"{disp}_ST",  $"Status1 bitmask of {disp}", 0, BACNET_UNITS_NO_UNITS);
-            AddAnalogInput (b + 4u, $"{disp}_SEQ", $"Measurement count of {disp}", 0, BACNET_UNITS_NO_UNITS);
-            AddAnalogInput (b + 5u, $"{disp}_CNT", $"Active value count of {disp}", child.DataCount, BACNET_UNITS_NO_UNITS);
-            // base+6: 全計測値が有効 (status1==0x00) なデータを最後に受信した日時。
-            // base+0 が「生存信号」なのに対し、こちらは「値がいつまで信頼できたか」を示す。
-            // 生成時点では正常データ未受信だが、便宜上生成時刻を初期値とする (base+0 と同じ扱い)。
-            AddDateTimeValue(b + 6u, $"{disp}_NDT", $"Last normal data (status1==0) time of {disp}", DateTime.Now);
+            AddDateTimeValue(b + 0u, $"{disp}_DT",    $"Last data publish time of {disp}", DateTime.Now);
+            AddCharString  (b + 1u, $"{disp}_UID",   $"Device ID (16 bytes) of {disp}", child.Uid);
+            AddCharString  (b + 2u, $"{disp}_NAME",  $"Configured label of {disp}", child.Name);
+            AddAnalogInput (b + 3u, $"{disp}_FAULT", $"Faulty channel bits of {disp}", 0, BACNET_UNITS_NO_UNITS);
+            AddAnalogInput (b + 4u, $"{disp}_SEQ",   $"Sample sequence of {disp}", 0, BACNET_UNITS_NO_UNITS);
+            AddAnalogInput (b + 5u, $"{disp}_CNT",   $"Channel count of {disp}", child.Channels.Length, BACNET_UNITS_NO_UNITS);
+            // base+6: 全チャネルが正常なデータを最後に受信した日時。base+0 が「生存信号」なのに対し、
+            // こちらは「値がいつまで信頼できたか」を示す。生成時刻を初期値とする。
+            AddDateTimeValue(b + 6u, $"{disp}_NDT",  $"Last normal data time of {disp}", DateTime.Now);
+            AddCharString  (b + 7u, $"{disp}_MODEL", $"Model of {disp}", ModelLabel(child.Model));
+            AddCharString  (b + 8u, $"{disp}_FW",    $"Firmware version of {disp}", child.Firmware);
+            AddAnalogInput (b + 9u, $"{disp}_UPTIME", $"Uptime of {disp}", 0, BACNET_UNITS_SECONDS);
 
-            for (int i = 0; i < child.DataCount; i++)
+            for (int i = 0; i < child.Channels.Length; i++)
             {
-                ushort unit = child.UnitTypes.Length > i ? child.UnitTypes[i] : BACNET_UNITS_NO_UNITS;
+                var ch = child.Channels[i];
+                string chName = string.IsNullOrWhiteSpace(ch.Name) ? $"CH{i}" : ch.Name.Trim();
                 AddAnalogInput(b + 10u + (uint)i,
-                    $"{disp}_V{i}",
-                    $"value[{i}] of {disp}",
+                    $"{disp}_{chName}",
+                    $"Channel {i} ({chName}) of {disp}",
                     0.0,
-                    unit);
+                    ch.Unit);
             }
         }
 
@@ -350,27 +262,16 @@ namespace PoEMServer.BACnet
             Communicator.Storage.RemoveObjectsInRange(child.InstanceBase, child.InstanceBase + INSTANCE_BLOCK);
         }
 
-        private void UpdateValueUnits(ChildNode child)
+        private void SetDeviceName(string name)
         {
-            uint b = child.InstanceBase;
-            for (int i = 0; i < child.DataCount; i++)
-            {
-                ushort unit = child.UnitTypes.Length > i ? child.UnitTypes[i] : BACNET_UNITS_NO_UNITS;
-                BacnetObjectId oid = new(BacnetObjectTypes.OBJECT_ANALOG_INPUT, b + 10u + (uint)i);
-                Communicator.Storage.WriteProperty(oid, BacnetPropertyIds.PROP_UNITS,
-                    new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED, (uint)unit));
-            }
+            BacnetObjectId oid = new(BacnetObjectTypes.OBJECT_DEVICE, Communicator.Storage.DeviceId);
+            Communicator.Storage.WriteProperty(oid, BacnetPropertyIds.PROP_OBJECT_NAME,
+                new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_CHARACTER_STRING, name));
         }
 
         #endregion
 
         #region 低レベルヘルパ (オブジェクト追加 / プロパティ書込)
-
-        private const ushort BACNET_UNITS_NO_UNITS = 95;
-
-        /// <summary>BACnet Reliability 列挙値 (ASHRAE 135)</summary>
-        private const uint BACNET_RELIABILITY_NO_FAULT_DETECTED = 0;
-        private const uint BACNET_RELIABILITY_COMMUNICATION_FAILURE = 12;
 
         /// <summary>
         /// DATETIME を Property.SerializeValue と同一の表現にする。
@@ -447,13 +348,13 @@ namespace PoEMServer.BACnet
         }
 
         /// <summary>
-        /// 計測値 AI オブジェクトのフォルト状態を設定する。
-        /// fault=true で STATUS_FLAGS の FAULT ビットを立て、RELIABILITY を
-        /// COMMUNICATION_FAILURE にする (PRESENT_VALUE は最終有効値のまま)。
+        /// チャネルの状態を反映する。reliability ≠ 0 なら STATUS_FLAGS の FAULT ビットを立て、
+        /// RELIABILITY に子機が送ってきた値をそのまま書く (PRESENT_VALUE は最終有効値のまま)。
         /// </summary>
-        private void WriteValueFault(uint instance, bool fault)
+        private void WriteValueFault(uint instance, uint reliability)
         {
             BacnetObjectId oid = new(BacnetObjectTypes.OBJECT_ANALOG_INPUT, instance);
+            bool fault = reliability != BACNET_RELIABILITY_NO_FAULT_DETECTED;
 
             // STATUS_FLAGS: {IN_ALARM, FAULT, OVERRIDDEN, OUT_OF_SERVICE}
             Communicator.Storage.WriteProperty(oid, BacnetPropertyIds.PROP_STATUS_FLAGS,
@@ -461,8 +362,7 @@ namespace PoEMServer.BACnet
                     BacnetBitString.Parse(fault ? "0100" : "0000")));
 
             Communicator.Storage.WriteProperty(oid, BacnetPropertyIds.PROP_RELIABILITY,
-                new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED,
-                    fault ? BACNET_RELIABILITY_COMMUNICATION_FAILURE : BACNET_RELIABILITY_NO_FAULT_DETECTED));
+                new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED, reliability));
         }
 
         private void WriteAnalogInput(uint instance, double value)
@@ -490,69 +390,30 @@ namespace PoEMServer.BACnet
 
         #region 内部ユーティリティ
 
-        private static ushort[] SanitizeUnits(ushort[] u)
+        private static ChannelDesc[] SanitizeChannels(ChannelDesc[]? ch)
         {
-            if (u == null) return System.Array.Empty<ushort>();
-            int n = Math.Min(u.Length, MAX_VALUES_PER_NODE);
-            ushort[] arr = new ushort[n];
-            System.Array.Copy(u, arr, n);
-            return arr;
+            if (ch == null) return System.Array.Empty<ChannelDesc>();
+            return ch.Take(MAX_VALUES_PER_NODE).ToArray();
         }
 
-        private static bool UnitsEqual(ushort[] a, ushort[] b)
+        private static string ModelLabel(ushort model)
         {
-            if (a.Length != b.Length) return false;
-            for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) return false;
-            return true;
+            return MODEL_NAMES.TryGetValue(model, out string? name)
+                ? $"{name} 0x{model:X4}"
+                : $"0x{model:X4}";
         }
 
         /// <summary>
         /// BACnet オブジェクト名のベース文字列。デバイス内で Object_Name の一意性が要求されるため、
-        /// adr 方式は I²C アドレス由来 (A008..A119)、レガシー方式は InstanceBase 由来 (L12000..) の
-        /// プレフィックスを必ず付ける (子機ラベルの重複対策)。
+        /// I²C アドレス由来のプレフィックス (A008..A119) を必ず付ける (子機の名前の重複対策)。
         /// </summary>
         private static string DisplayName(ChildNode child)
         {
             string n = child.Name?.Trim() ?? "";
-            string label = string.IsNullOrEmpty(n) ? $"Node_{child.DeviceId}" : n;
-            return child.I2cAddr == 0 ? $"L{child.InstanceBase}_{label}" : $"A{child.I2cAddr:D3}_{label}";
-        }
-
-        /// <summary>レガシー対応表 (DeviceID → InstanceBase) を読み込み、次の発番位置を復元する。</summary>
-        private void LoadLegacyMap()
-        {
-            try
-            {
-                if (!File.Exists(legacyMapPath)) return;
-
-                var map = System.Text.Json.JsonSerializer.Deserialize<Dictionary<uint, uint>>(File.ReadAllText(legacyMapPath));
-                if (map == null) return;
-
-                foreach (var kv in map)
-                {
-                    legacyBases[kv.Key] = kv.Value;
-                    if (kv.Value >= nextLegacyBase) nextLegacyBase = kv.Value + INSTANCE_BLOCK;
-                }
-                Console.WriteLine($"[INFO] loaded {legacyBases.Count} legacy instance mapping(s) from {LEGACY_MAP_FILE}.");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[WARN] failed to load {LEGACY_MAP_FILE}: {ex.Message}");
-            }
-        }
-
-        /// <summary>レガシー対応表をファイルへ保存する (発番・削除のたびに全書き)。</summary>
-        private void SaveLegacyMap()
-        {
-            try
-            {
-                var opts = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-                File.WriteAllText(legacyMapPath, System.Text.Json.JsonSerializer.Serialize(legacyBases, opts));
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[WARN] failed to save {LEGACY_MAP_FILE}: {ex.Message}");
-            }
+            string label = string.IsNullOrEmpty(n)
+                ? $"Node_{(child.Uid.Length >= 8 ? child.Uid[^8..] : child.Uid)}"
+                : n;
+            return $"A{child.I2cAddr:D3}_{label}";
         }
 
         #endregion
@@ -561,14 +422,35 @@ namespace PoEMServer.BACnet
         private sealed class ChildNode
         {
             public byte I2cAddr;
-            public uint DeviceId;
             public uint InstanceBase;
+            public string Uid = "";
             public string Name = "";
-            public int DataCount;
-            public ushort[] UnitTypes = System.Array.Empty<ushort>();
+            public ushort Model;
+            public string Firmware = "";
+            public ChannelDesc[] Channels = System.Array.Empty<ChannelDesc>();
 
-            /// <summary>直近に BACnet へ反映した status1 (FAULT/RELIABILITY の差分更新用)</summary>
-            public byte LastStatus1;
+            /// <summary>直近に BACnet へ反映したチャネルの状態 (FAULT/RELIABILITY の差分更新用)</summary>
+            public uint[] LastStatus = new uint[MAX_VALUES_PER_NODE];
+
+            public void Apply(NodeConfigPayload c, ChannelDesc[] channels)
+            {
+                Uid = c.Uid ?? "";
+                Name = c.Name ?? "";
+                Model = c.Model;
+                Firmware = c.Firmware ?? "";
+                Channels = channels;
+            }
+
+            /// <summary>オブジェクトの構成 (チャネル数・名前・単位) が同じか</summary>
+            public bool SameLayout(ChannelDesc[] other)
+            {
+                if (other.Length != Channels.Length) return false;
+                for (int i = 0; i < other.Length; i++)
+                {
+                    if (other[i].Name != Channels[i].Name || other[i].Unit != Channels[i].Unit) return false;
+                }
+                return true;
+            }
         }
     }
 }

@@ -2,64 +2,118 @@
 
 namespace PoEMServer
 {
-    /// <summary>
-    /// MQTT topic "nodes/config/&lt;id&gt;" のペイロード。
-    /// 親機 (poem_pod) が SCAN 時に各子機について 1 回 publish する固定情報。
-    /// firmware/poem_pod.X/node_manager.c::NM_buildConfigJson と同期。
-    /// </summary>
-    internal class NodeConfigPayload
+    // MQTT v2 のペイロード。親機 (firmware/poem_pod.X) の node_manager.c / main.c と同期する。
+    //
+    // トピック:
+    //   poem/<pod>/pod/info              親機の情報 (接続のたび)
+    //   poem/<pod>/pod/diag              親機の I2C 診断 (毎秒、ログに出すだけ)
+    //   poem/<pod>/node/<adr>/config     子機の固定情報 (走査時・増設時)
+    //   poem/<pod>/node/<adr>/data       子機の計測値 (毎秒)
+    //   poem/<pod>/node/<adr>/diag       子機の拡張ステータス (変化時)
+    // <pod> は親機の MAC アドレス 12 桁、<adr> は子機の I2C アドレス (10 進)。
+
+    /// <summary>poem/&lt;pod&gt;/pod/info</summary>
+    internal class PodInfoPayload
     {
-        /// <summary>子機の DeviceID (FNV-1a 22bit ハッシュ、個体識別用)</summary>
-        [JsonPropertyName("id")]
-        public uint Id { get; set; }
+        /// <summary>親機のファームウェアの版 ("2.0.0")</summary>
+        [JsonPropertyName("fw")]
+        public string Firmware { get; set; } = "";
 
-        /// <summary>
-        /// 子機の I²C アドレス (7bit, 8..119)。BACnet インスタンス番号の基数 (adr×100) に使う。
-        /// このフィールドが無い旧ファームのペイロードでは 0 になる (→ 登録拒否)。
-        /// </summary>
-        [JsonPropertyName("adr")]
-        public byte I2cAddr { get; set; }
-
-        /// <summary>装置ラベル (子機の EEPROM 永続、最大 15 文字)</summary>
+        /// <summary>親機名 (Web 画面で設定する。空のこともある)</summary>
         [JsonPropertyName("name")]
         public string Name { get; set; } = "";
 
-        /// <summary>有効計測値の個数 (≤ 8)</summary>
-        [JsonPropertyName("cnt")]
-        public int DataCount { get; set; }
-
-        /// <summary>各計測値の BACnet 単位コード (ASHRAE 135 EngineeringUnits)</summary>
-        [JsonPropertyName("u")]
-        public ushort[] UnitTypes { get; set; } = System.Array.Empty<ushort>();
+        /// <summary>親機の IP アドレス</summary>
+        [JsonPropertyName("ip")]
+        public string Ip { get; set; } = "";
     }
 
-    /// <summary>
-    /// MQTT topic "nodes/data/&lt;id&gt;" のペイロード。
-    /// 親機が毎周期 (1 秒) publish する計測データ。
-    /// firmware/poem_pod.X/node_manager.c::NM_buildDataJson と同期。
-    /// </summary>
+    /// <summary>子機のチャネル記述 (OSL 共通レジスタ v2 のチャネル記述 + 拡張チャネル属性)</summary>
+    internal class ChannelDesc
+    {
+        /// <summary>チャネル名 ("Temp" など)</summary>
+        [JsonPropertyName("n")]
+        public string Name { get; set; } = "";
+
+        /// <summary>BACnet Engineering Units</summary>
+        [JsonPropertyName("u")]
+        public ushort Unit { get; set; }
+
+        /// <summary>値の型 (0 = float32, 1 = int32, 2 = uint32)</summary>
+        [JsonPropertyName("t")]
+        public byte Type { get; set; }
+
+        /// <summary>有効桁数 (0 = 既定)</summary>
+        [JsonPropertyName("p")]
+        public byte Precision { get; set; }
+
+        /// <summary>bit0 = 積算値、bit1 = 補助値</summary>
+        [JsonPropertyName("f")]
+        public byte Flags { get; set; }
+    }
+
+    /// <summary>poem/&lt;pod&gt;/node/&lt;adr&gt;/config</summary>
+    internal class NodeConfigPayload
+    {
+        /// <summary>個体 ID (16 B の device_id を 16 進 32 文字)</summary>
+        [JsonPropertyName("uid")]
+        public string Uid { get; set; } = "";
+
+        [JsonPropertyName("vendor")]
+        public ushort Vendor { get; set; }
+
+        [JsonPropertyName("model")]
+        public ushort Model { get; set; }
+
+        /// <summary>子機のファームウェアの版</summary>
+        [JsonPropertyName("fw")]
+        public string Firmware { get; set; } = "";
+
+        /// <summary>新しい値を公開する周期 [ms]</summary>
+        [JsonPropertyName("period")]
+        public ushort PeriodMs { get; set; }
+
+        /// <summary>利用者が付けた呼び名 (UTF-8、63 バイトまで)</summary>
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = "";
+
+        [JsonPropertyName("ch")]
+        public ChannelDesc[] Channels { get; set; } = System.Array.Empty<ChannelDesc>();
+    }
+
+    /// <summary>poem/&lt;pod&gt;/node/&lt;adr&gt;/data</summary>
     internal class NodeDataPayload
     {
-        /// <summary>子機の DeviceID (FNV-1a 22bit ハッシュ、BACnet Object Instance 互換, 0..4194302)</summary>
-        [JsonPropertyName("id")]
-        public uint Id { get; set; }
-
-        /// <summary>Status1: per-value bitmask (bit i = value[i] が stale)、0xFF = 全停止</summary>
-        [JsonPropertyName("st")]
-        public byte Status1 { get; set; }
-
-        /// <summary>
-        /// 子機自身が数えた計測回数 (0..255、255 の次は 0、再起動で 0)。
-        /// 進み方は機種で異なる (温湿度 125ms 周期で毎秒 +8、風速は毎秒 +5)。
-        /// 0x2A 未対応の子機は 0 のまま動かない。
-        /// 以前は親機側で管理するシーケンス番号 (新値ごとに +1、255=未計測) だったが、
-        /// 子機が黙って再起動しても止まらず生存監視に使えなかったため差し替えた。
-        /// </summary>
+        /// <summary>sample_seq (子機が新しい値を公開するたびに +1)。親機が子機を読めなかったときは無い</summary>
         [JsonPropertyName("sq")]
-        public byte Seq { get; set; }
+        public ushort? Seq { get; set; }
 
-        /// <summary>計測値配列 (有効長は DataCount、超過分は無視)</summary>
+        /// <summary>チャネルごとの状態 (BACnet Reliability の値。0 = 正常、12 = 通信失敗、64 = 準備中)</summary>
+        [JsonPropertyName("st")]
+        public uint[] Status { get; set; } = System.Array.Empty<uint>();
+
+        /// <summary>計測値。親機が子機を読めなかったときは空</summary>
         [JsonPropertyName("v")]
-        public float[] Values { get; set; } = System.Array.Empty<float>();
+        public double[] Values { get; set; } = System.Array.Empty<double>();
+    }
+
+    /// <summary>poem/&lt;pod&gt;/node/&lt;adr&gt;/diag</summary>
+    internal class NodeDiagPayload
+    {
+        /// <summary>稼働時間 [s]</summary>
+        [JsonPropertyName("up")]
+        public uint UptimeSec { get; set; }
+
+        /// <summary>直近の起動要因 (1 = 電源投入、2 = 電圧低下、3 = ウォッチドッグ、4 = ソフトウェア、5 = 外部)</summary>
+        [JsonPropertyName("rc")]
+        public byte ResetCause { get; set; }
+
+        /// <summary>I2C の異常回数 (一巡する)</summary>
+        [JsonPropertyName("err")]
+        public ushort ErrI2c { get; set; }
+
+        /// <summary>センサとの通信の異常回数 (一巡する)</summary>
+        [JsonPropertyName("serr")]
+        public ushort ErrSensor { get; set; }
     }
 }

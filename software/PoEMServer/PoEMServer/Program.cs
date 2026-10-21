@@ -1,4 +1,4 @@
-using MQTTnet.Diagnostics.Logger;
+﻿using MQTTnet.Diagnostics.Logger;
 using MQTTnet.Server;
 using PoEMServer.BACnet;
 using System.Net;
@@ -10,11 +10,9 @@ namespace PoEMServer
     /// <summary>
     /// PoEM 親機 (poem_pod) 用 MQTT ブローカ + BACnet ブリッジ。
     ///
-    /// 親機は OSL 共通レジスタ仕様 (SHASE 2026 第2報) に基づき、
-    ///   - "nodes/config/&lt;hex&gt;" : 子機 1 台の固定情報 (DataCount/UnitType/Name)、SCAN 時 1 回
-    ///   - "nodes/data/&lt;hex&gt;"   : 子機 1 台の計測値 (Status1/Seq/value[])、毎秒
-    /// を publish する。本サーバはこれらを受け取り、子機ごとに動的に BACnet オブジェクトを
-    /// 生成・更新する。
+    /// 親機は OSL 共通レジスタ v2 の子機を読み、MQTT v2 で publish する (NodePayloads.cs)。
+    /// 本サーバはこれを受け取り、親機ごとに BACnet Device を作り (PodRegistry)、
+    /// 子機ごとに BACnet オブジェクトを動的に生成・更新する (PoEMDevice)。
     /// </summary>
     internal class Program
     {
@@ -22,7 +20,7 @@ namespace PoEMServer
 
         private static readonly Dictionary<string, string> initSettings = new();
         private static bool writeToConsole = true;
-        private static PoEMDevice? poemDevice;
+        private static PodRegistry? pods;
 
         #endregion
 
@@ -32,8 +30,11 @@ namespace PoEMServer
 
             if (!loadInitFile()) return;
 
-            // BACnet ブリッジを起動 (UDP サーバはコンストラクタ内で開始される)
-            poemDevice = new PoEMDevice(int.Parse(initSettings["bacport"]), initSettings["bacip"]);
+            // 親機ごとの BACnet Device は、最初のメッセージを受け取ったときに作る。
+            // Device インスタンス番号 = bacdevice + 親機の番号、ポート = bacport + 親機の番号。
+            string template = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PoEMDeviceStorage.xml");
+            uint deviceBase = uint.Parse(initSettings.GetValueOrDefault("bacdevice", "0"));
+            pods = new PodRegistry(template, deviceBase, int.Parse(initSettings["bacport"]), initSettings["bacip"]);
 
             bool.TryParse(initSettings["console"], out writeToConsole);
 
@@ -45,7 +46,7 @@ namespace PoEMServer
             Console.WriteLine();
             Console.WriteLine("#########################################################################");
             Console.WriteLine("#                                                                       #");
-            Console.WriteLine("#                  PoEMServer  version 1.0.0 (OSL)                      #");
+            Console.WriteLine("#                  PoEMServer  version 2.0.0 (OSL v2)                    #");
             Console.WriteLine("#                                                                       #");
             Console.WriteLine("#########################################################################");
             Console.WriteLine();
@@ -112,17 +113,7 @@ namespace PoEMServer
 
                 try
                 {
-                    if (topic.StartsWith("nodes/config/"))
-                    {
-                        var cfg = JsonSerializer.Deserialize<NodeConfigPayload>(payload);
-                        if (cfg != null) poemDevice!.OnConfig(cfg);
-                    }
-                    else if (topic.StartsWith("nodes/data/"))
-                    {
-                        var data = JsonSerializer.Deserialize<NodeDataPayload>(payload);
-                        if (data != null) poemDevice!.OnData(data);
-                    }
-                    // それ以外のトピックは無視 (ブローカとしては配送だけする)
+                    Dispatch(topic, payload);
                 }
                 catch (JsonException jex)
                 {
@@ -148,6 +139,46 @@ namespace PoEMServer
             Console.CancelKeyPress += (_, e) => { e.Cancel = true; stopping.Set(); };
             stopping.Wait();
             await mqttServer.StopAsync();
+        }
+
+        /// <summary>
+        /// トピックで振り分ける (MQTT v2):
+        ///   poem/&lt;pod&gt;/pod/info | diag
+        ///   poem/&lt;pod&gt;/node/&lt;adr&gt;/config | data | diag
+        /// それ以外のトピックは無視する (ブローカとしては配送だけする)。
+        /// </summary>
+        private static void Dispatch(string topic, string payload)
+        {
+            string[] t = topic.Split('/');
+            if (t.Length < 4 || t[0] != "poem") return;
+            string podId = t[1];
+
+            if (t[2] == "pod" && t.Length == 4)
+            {
+                if (t[3] == "info")
+                {
+                    var info = JsonSerializer.Deserialize<PodInfoPayload>(payload);
+                    if (info != null) pods!.Get(podId).OnPodInfo(info);
+                }
+                return;     // pod/diag はログに出すだけ
+            }
+
+            if (t[2] != "node" || t.Length != 5 || !byte.TryParse(t[3], out byte adr)) return;
+            switch (t[4])
+            {
+                case "config":
+                    var cfg = JsonSerializer.Deserialize<NodeConfigPayload>(payload);
+                    if (cfg != null) pods!.Get(podId).OnConfig(adr, cfg);
+                    break;
+                case "data":
+                    var data = JsonSerializer.Deserialize<NodeDataPayload>(payload);
+                    if (data != null) pods!.Get(podId).OnData(adr, data);
+                    break;
+                case "diag":
+                    var diag = JsonSerializer.Deserialize<NodeDiagPayload>(payload);
+                    if (diag != null) pods!.Get(podId).OnDiag(adr, diag);
+                    break;
+            }
         }
 
         #region Debug 用ロガー
