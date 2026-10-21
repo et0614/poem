@@ -65,8 +65,9 @@ class CP2112Device:
             else:
                 self.__dev.open(self.VID, self.PID, self.serial_number)
             self.__dev.write([
-                CP2112Report.CANCEL_TRANSFER, 
+                CP2112Report.CANCEL_TRANSFER,
                 0x01]) # Transfer Reset
+            self._configure_smbus()
             self.is_open = True
             return True
         except Exception as e:
@@ -80,6 +81,31 @@ class CP2112Device:
             self.__dev.close()
             self.is_open = False
 
+
+    # SMBus の設定 (Feature Report 0x06、AN495)
+    SMBUS_CONFIG     = 0x06
+    SPEED_HZ         = 100000
+    WRITE_TIMEOUT_MS = 100
+    READ_TIMEOUT_MS  = 100
+    RETRY_LIMIT      = 1
+
+    def _configure_smbus(self):
+        """NACK の再送回数とタイムアウトを設定する。
+
+        CP2112 の既定は「NACK を受けたら打ち切るまで無制限に再送」「タイムアウトなし」。
+        存在しないアドレスを調べるたびに打ち切りまで START を送り続けるので、走査に
+        1 アドレス約 160 ms (全体で約 18 秒) かかっていた。再送を 1 回に絞り、読み書きの
+        タイムアウトと SCL の Low 張り付き検出 (25 ms) を有効にする。
+        設定は RAM にだけ書く (CP2112 の電源を切ると既定に戻る)。"""
+        cfg = [self.SMBUS_CONFIG]
+        cfg += list(self.SPEED_HZ.to_bytes(4, 'big'))
+        cfg += [0x02,                                   # CP2112 自身のアドレス (既定値)
+                0x00]                                   # Auto Send Read: 無効
+        cfg += list(self.WRITE_TIMEOUT_MS.to_bytes(2, 'big'))
+        cfg += list(self.READ_TIMEOUT_MS.to_bytes(2, 'big'))
+        cfg += [0x01]                                   # SCL Low タイムアウト: 有効
+        cfg += list(self.RETRY_LIMIT.to_bytes(2, 'big'))
+        self.__dev.send_feature_report(cfg)
 
     def _raw_write(self, data: list):
         """CP2112に書き込む"""
@@ -226,6 +252,115 @@ class CP2112Device:
                 time.sleep(0.001)
 
         return False
+
+    # endregion
+
+    # region 汎用 I2C (OSL v2 用。番地の形を問わない)
+
+    # 1 回の書き込みの上限 [byte]。CP2112 の Data Write Request の上限で、これを超える
+    # 書き込みは 1 つの I2C 転送にできない。読み出しは 512 byte まで。
+    MAX_WRITE = 61
+    MAX_READ  = 512
+
+    def _wait_complete(self) -> bool:
+        """転送の完了を待つ。NACK・バス異常・タイムアウトで False (中途の転送は取り消す)"""
+        for _ in range(50):
+            self.__dev.write([CP2112Report.TRANSFER_STATUS_REQ, 0x01])
+            res = self.__dev.read(64, 100)
+            if res and res[0] == CP2112Report.TRANSFER_STATUS_RESPONSE:
+                if res[1] == I2CStatus.COMPLETE:
+                    return True
+                if res[1] == I2CStatus.ERROR:
+                    break
+            time.sleep(0.001)
+        self.__dev.write([CP2112Report.CANCEL_TRANSFER, 0x01])
+        return False
+
+    def _drain(self):
+        """受信待ちに残っている古い応答を捨てる。
+
+        応答の数が要求と食い違うと、残った応答を次の転送が自分の応答と取り違え、
+        以降の転送がすべて失敗する。転送の前に必ず空にしておく。"""
+        # read(…, 0) は「待たない」ではなく「届くまで待つ」になる (hidapi の仕様) ので 1 ms にする
+        for _ in range(64):
+            if not self.__dev.read(64, 1):
+                break
+
+    def _fetch(self, length: int):
+        """受信済みのデータを取り出す。
+
+        送信要求 (Force Send) は全体の長さで 1 回だけ出す。CP2112 は 1 回の応答に
+        最大 61 byte しか入れられないので、61 byte を超えるときは応答が複数届く。
+        残りの長さで送信要求を出し直すと応答が余分に 1 つ返り、受信待ちに残ってしまう。"""
+        self.__dev.write([CP2112Report.DATA_READ_FORCE_SEND,
+                          (length >> 8) & 0xFF, length & 0xFF])
+        data = []
+        for _ in range(length // 61 + 4):
+            if len(data) >= length:
+                break
+            res = self.__dev.read(64, 500)
+            if not res or res[0] != CP2112Report.DATA_READ_RESPONSE or len(res) < 3:
+                return None
+            data += res[3:3 + res[2]]
+        return bytes(data[:length]) if len(data) >= length else None
+
+    def i2c_write(self, addr: int, data, retries=2) -> bool:
+        """S, adr+W, data…, P。成功で True。61 byte を超える書き込みはできない"""
+        data = list(data)
+        if not data or len(data) > self.MAX_WRITE:
+            raise ValueError(f'CP2112 の書き込みは 1〜{self.MAX_WRITE} byte')
+        for attempt in range(retries + 1):
+            try:
+                self._drain()
+                self.__dev.write([CP2112Report.DATA_WRITE_REQ, addr << 1, len(data)] + data)
+                if self._wait_complete():
+                    return True
+            except Exception:
+                pass
+            if attempt < retries:
+                time.sleep(0.001)
+        return False
+
+    def i2c_read(self, addr: int, length: int, retries=2):
+        """S, adr+R, data…, P (番地を送らない読み出し)。失敗で None"""
+        for attempt in range(retries + 1):
+            try:
+                self._drain()
+                self.__dev.write([CP2112Report.DATA_READ_REQ, addr << 1,
+                                  (length >> 8) & 0xFF, length & 0xFF])
+                if self._wait_complete():
+                    data = self._fetch(length)
+                    if data is not None:
+                        return data
+            except Exception:
+                pass
+            if attempt < retries:
+                time.sleep(0.001)
+        return None
+
+    def i2c_write_read(self, addr: int, wdata, length: int, retries=2):
+        """S, adr+W, wdata…, Sr, adr+R, data…, P。wdata は 1〜16 byte。失敗で None"""
+        wdata = list(wdata)
+        if not 1 <= len(wdata) <= 16:
+            raise ValueError('CP2112 の番地は 1〜16 byte')
+        for attempt in range(retries + 1):
+            try:
+                self._drain()
+                self.__dev.write([CP2112Report.DATA_WRITE_READ_REQ, addr << 1,
+                                  (length >> 8) & 0xFF, length & 0xFF, len(wdata)] + wdata)
+                if self._wait_complete():
+                    data = self._fetch(length)
+                    if data is not None:
+                        return data
+            except Exception:
+                pass
+            if attempt < retries:
+                time.sleep(0.001)
+        return None
+
+    def probe(self, addr: int) -> bool:
+        """addr に ACK が返るかを調べる (1 byte 読み出し、書き込みはしない)"""
+        return self.i2c_read(addr, 1, retries=0) is not None
 
     # endregion
 

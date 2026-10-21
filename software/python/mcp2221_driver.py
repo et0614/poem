@@ -287,6 +287,59 @@ class MCP2221Device:
                 time.sleep(0.001)
         return False
 
+    # endregion
+
+    # region 汎用 I2C (OSL v2 用。番地の形を問わない)
+
+    # 1 回の書き込みの上限 [byte]。MCP2221 は 60 byte ずつに分けて 1 つの I2C 転送にできる
+    MAX_WRITE = 65535
+
+    def i2c_write(self, addr: int, data, retries=2) -> bool:
+        """S, adr+W, data…, P。成功で True"""
+        data = list(data)
+        if not data:
+            return False
+        for attempt in range(retries + 1):
+            try:
+                if self._write(CMD_I2C_WRITE, addr, data):
+                    return True
+            except IOError:
+                pass
+            self._release()
+            if attempt < retries:
+                time.sleep(0.001)
+        return False
+
+    def i2c_read(self, addr: int, length: int, retries=2):
+        """S, adr+R, data…, P (番地を送らない読み出し)。失敗で None"""
+        for attempt in range(retries + 1):
+            try:
+                data = self._read(CMD_I2C_READ, addr, length)
+                if data is not None:
+                    return data
+            except IOError:
+                pass
+            self._release()
+            if attempt < retries:
+                time.sleep(0.001)
+        return None
+
+    def i2c_write_read(self, addr: int, wdata, length: int, retries=2):
+        """S, adr+W, wdata…, Sr, adr+R, data…, P。失敗で None"""
+        wdata = list(wdata)
+        for attempt in range(retries + 1):
+            try:
+                if self._write(CMD_I2C_WRITE_NOSTOP, addr, wdata):
+                    data = self._read(CMD_I2C_READ_REPSTART, addr, length)
+                    if data is not None:
+                        return data
+            except IOError:
+                pass
+            self._release()
+            if attempt < retries:
+                time.sleep(0.001)
+        return None
+
     def probe(self, addr: int) -> bool:
         """addr に ACK が返るかを調べる (1 byte 読み出し)。I2C スキャン用"""
         try:

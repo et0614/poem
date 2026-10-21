@@ -8,7 +8,7 @@ osl_reader.Watcher がそのまま行い、ここでは描画だけを受け持�
   - 子機ごとに 1 行、計測値ごとに 1 列の小さなグラフを並べる。単位の違う値
     (気圧と温度など) を 1 枚に重ねると縦軸が 2 本になって読み違えるので、必ず分ける。
   - 1 枚に 1 系列なので凡例は付けず、タイトルに子機と計測値の名前、右上に最新値を出す。
-  - stale (Status1 の bit が立った) 値と読み出し失敗は線を途切れさせて示す。
+  - 状態が正常でない値 (status ≠ 0) と読み出し失敗は線を途切れさせて示す。
     最後の値を引き延ばすと、止まっているのに動いているように見えてしまう。
   - マウスを重ねると、その時刻の値を表示する。拡大・移動はツールバーで行う。
   - 横軸は直近 span 秒だけを表示する。データは全期間 CSV に残っている。
@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import FormatStrFormatter, MaxNLocator
 
-from osl_reader import UNIT_NAMES, VALUE_DECIMALS, sensor_type
+from osl_reader import VALUE_DECIMALS
 
 # ===== 色と線 =============================================================
 SURFACE   = '#fcfcfb'   # グラフ面
@@ -42,19 +42,9 @@ LINE_W    = 2.0
 matplotlib.rcParams['font.family'] = ['Yu Gothic', 'Meiryo', 'MS Gothic', 'DejaVu Sans']
 matplotlib.rcParams['axes.unicode_minus'] = False
 
-# 機種ごとの計測値の名前 (補正係数ラベルを持たない機種用)
-VALUE_LABELS = {
-    (74, 5): ('風速', '回路電圧'),
-}
-
-
-def value_labels(info: dict, poll) -> tuple:
-    _name, labels = sensor_type(info, poll)
-    if labels is None:
-        labels = VALUE_LABELS.get(tuple(info['units'][:2]))
-    if labels is None:
-        labels = tuple(f'value{i}' for i in range(info['count']))
-    return labels
+def value_labels(info: dict) -> tuple:
+    """計測値の名前。v2 ではチャネル記述にチャネル名が入っている"""
+    return tuple(n or f'ch{i}' for i, n in enumerate(info['ch_names']))
 
 
 def style_axes(ax):
@@ -98,7 +88,7 @@ class Panel:
 
     def append(self, t, info, poll):
         i = self.index
-        if poll is None or (poll['st1'] >> i) & 1:
+        if poll is None or poll['status'][i] != 0:
             value = float('nan')        # 線を途切れさせる
         else:
             value = poll['values'][i]
@@ -106,10 +96,9 @@ class Panel:
         self.v.append(value)
 
         if info is not None:
-            self.unit = UNIT_NAMES.get(info['units'][i], f'unit{info["units"][i]}')
-            name, _ = sensor_type(info, poll)
-            label = value_labels(info, poll)[i]
-            self.title.set_text(f'0x{self.addr:02X} {name} — {label} [{self.unit}]')
+            self.unit = info['unit_names'][i]
+            label = value_labels(info)[i]
+            self.title.set_text(f'0x{self.addr:02X} {info["model_name"]} — {label} [{self.unit}]')
         else:
             # 開始時に応答しなかった子機は機種も単位も分からない
             self.title.set_text(f'0x{self.addr:02X} 応答なし')

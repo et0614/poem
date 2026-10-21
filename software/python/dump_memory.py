@@ -1,67 +1,67 @@
 """
-子機 (温湿度センサ / 風速センサ) の I2C 共通レジスタを 0x00 から
-任意バイトダンプするデバッグスクリプト。
+OSL v2 子機のレジスタを任意の番地から 16 進ダンプするデバッグ用スクリプト。
 
 usage:
-    python dump_memory.py [serial] [slave_addr_hex] [length_hex]
-    例: python dump_memory.py             -> 0x10, 0x60 byte
-        python dump_memory.py - 0x10 0x60
+    python dump_memory.py 0x10                    0x10 の子機の 0x0000 から 0x60 バイト
+    python dump_memory.py 0x10 0x0300 0x20        番地 0x0300 から 0x20 バイト
+    python dump_memory.py 0x10 --noaddr 0x20      番地を送らずに読む (読み出し位置の確認用)
+    python dump_memory.py 0x10 --bridge cp2112
 """
+import argparse
 import sys
-from cp2112_driver import CP2112Device
+
+import osl
+
+# 子機の名前などに cp932 で表せない文字があっても、コンソール表示で落ちないようにする
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(errors='replace')
 
 
-def hex_dump(data: bytes, base: int = 0x00, width: int = 16):
-    for row in range(0, len(data), width):
-        chunk = data[row:row + width]
-        hex_part = ' '.join(f'{b:02X}' for b in chunk)
-        ascii_part = ''.join(chr(b) if 32 <= b < 127 else '.' for b in chunk)
-        print(f'  {base + row:02X}: {hex_part:<{width * 3}}  {ascii_part}')
+def hex_dump(data: bytes, base: int = 0x0000, width: int = 16):
+    for i in range(0, len(data), width):
+        chunk = data[i:i + width]
+        hexs = ' '.join(f'{b:02X}' for b in chunk)
+        text = ''.join(chr(b) if 0x20 <= b < 0x7F else '.' for b in chunk)
+        print(f'{base + i:04X}: {hexs:<{width * 3}} {text}')
 
 
 def main():
-    serial = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] != '-' else None
-    addr   = int(sys.argv[2], 0) if len(sys.argv) > 2 else 0x10
-    length = int(sys.argv[3], 0) if len(sys.argv) > 3 else 0x60
+    ap = argparse.ArgumentParser(description='OSL v2 子機のレジスタを 16 進ダンプする')
+    ap.add_argument('addr', type=lambda s: int(s, 0), help='子機の I2C アドレス')
+    ap.add_argument('start', type=lambda s: int(s, 0), nargs='?', default=0x0000, help='先頭の番地')
+    ap.add_argument('length', type=lambda s: int(s, 0), nargs='?', default=0x60, help='バイト数')
+    ap.add_argument('--noaddr', type=lambda s: int(s, 0), metavar='LEN',
+                    help='番地を送らずに LEN バイト読む')
+    ap.add_argument('--bridge', choices=('auto', 'mcp2221', 'cp2112'), default='auto')
+    ap.add_argument('--serial', help='ブリッジのシリアル番号 (複数接続時)')
+    args = ap.parse_args()
 
-    print(f'Target: addr=0x{addr:02X}, length={length} ({length:#x})')
-    if serial:
-        print(f'CP2112 serial: {serial}')
-
-    with CP2112Device(slave_addr=addr, serial_number=serial) as dev:
-        if not dev.is_open:
-            print('Could not open CP2112.')
-            return 1
-
-        # 1) 一括読み出し
-        print('\n--- Block read (offset=0x00, length above) ---')
-        block = dev.read_i2c_block(0x00, length)
-        if block:
-            hex_dump(block, base=0x00)
+    bus = osl.open_bridge(args.bridge, args.serial)
+    if bus is None:
+        print('USB-I2C ブリッジが見つかりません。')
+        return 1
+    try:
+        if args.noaddr:
+            data = bus.i2c_read(args.addr, args.noaddr)
+            print(f'0x{args.addr:02X}: 番地なしで {args.noaddr} バイト')
+            base = 0
         else:
-            print('Block read failed (NACK/timeout?).')
-
-        # 2) 1 バイトずつの読み出しと比較 (register pointer 動作確認用)
-        print('\n--- Per-byte read (offset 0x00..0x1F) ---')
-        per_byte = bytearray()
-        for off in range(min(length, 0x20)):
-            r = dev.read_i2c_block(off, 1)
-            per_byte.append(r[0] if r else 0xEE)  # 0xEE = read failed
-        hex_dump(bytes(per_byte), base=0x00)
-
-        # 3) 一括読みとの差分
-        if block:
-            print('\n--- Diff (block vs per-byte, first 0x20) ---')
-            mismatches = []
-            for i in range(min(0x20, len(block))):
-                if block[i] != per_byte[i]:
-                    mismatches.append((i, block[i], per_byte[i]))
-            if not mismatches:
-                print('  no diff (slave register-pointer behaves consistently)')
-            else:
-                for off, b, p in mismatches:
-                    print(f'  0x{off:02X}: block=0x{b:02X}  per-byte=0x{p:02X}')
-
+            dev = osl.OslDevice(bus, args.addr)
+            data = b''
+            for ofs in range(0, args.length, 256):
+                part = dev.read(args.start + ofs, min(256, args.length - ofs))
+                if part is None:
+                    data = None
+                    break
+                data += part
+            print(f'0x{args.addr:02X}: 番地 0x{args.start:04X} から {args.length} バイト')
+            base = args.start
+        if data is None:
+            print('読み出し失敗 (NACK / タイムアウト)')
+            return 1
+        hex_dump(data, base)
+    finally:
+        bus.close()
     return 0
 
 
