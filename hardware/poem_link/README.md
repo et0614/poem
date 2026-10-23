@@ -6,7 +6,6 @@ USB-MIDI ⇔ I²C ブリッジ (AVR32DU20)。ファームウェアは `firmware/
 |---|---|
 | `PoEM_Link_schematic.pdf` | 回路図 |
 | `PoEM_Link_gerber.zip` | ガーバー (JLCPCB にそのまま上げる) |
-| `PoEM_Link_odb.zip` | ODB++ |
 | `PoEM_Link_BOM_JLCPCB.csv` | 実装用 BOM (JLCPCB 形式) |
 | `PoEM_Link_CPL_JLCPCB.csv` | 実装用 部品配置 (JLCPCB 形式) |
 | `fusion_export/` | Fusion から書き出した元データ (部品表・PnP) |
