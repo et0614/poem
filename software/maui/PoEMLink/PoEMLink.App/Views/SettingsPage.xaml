@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:PoEMLink.App.ViewModels"
+             x:Class="PoEMLink.App.Views.SettingsPage"
+             x:DataType="vm:SettingsViewModel"
+             Style="{StaticResource PageStyle}"
+             Title="Link と設定">
+
+  <ScrollView>
+    <VerticalStackLayout Padding="12,4,12,24" Spacing="4">
+
+      <Label Text="PoEM Link" Style="{StaticResource SectionTitle}" />
+      <Border Style="{StaticResource Card}">
+        <VerticalStackLayout Spacing="10">
+          <VerticalStackLayout BindableLayout.ItemsSource="{Binding LinkRows}" Spacing="6">
+            <BindableLayout.ItemTemplate>
+              <DataTemplate x:DataType="vm:InfoRow">
+                <Grid ColumnDefinitions="110,*" ColumnSpacing="8">
+                  <Label Text="{Binding Label}" Style="{StaticResource Muted}" FontSize="13" />
+                  <Label Grid.Column="1" Text="{Binding Value}" FontSize="13" LineBreakMode="CharacterWrap" />
+                </Grid>
+              </DataTemplate>
+            </BindableLayout.ItemTemplate>
+          </VerticalStackLayout>
+          <Button Text="Link の LED を点滅させる (5 秒)" Style="{StaticResource OutlineButton}"
+                  Command="{Binding IdentifyLinkCommand}" IsVisible="{Binding IsConnected}" />
+        </VerticalStackLayout>
+      </Border>
+
+      <Label Text="I²C バス" Style="{StaticResource SectionTitle}" IsVisible="{Binding IsConnected}" />
+      <Border Style="{StaticResource Card}" IsVisible="{Binding IsConnected}">
+        <VerticalStackLayout Spacing="10">
+          <VerticalStackLayout BindableLayout.ItemsSource="{Binding BusRows}" Spacing="6">
+            <BindableLayout.ItemTemplate>
+              <DataTemplate x:DataType="vm:InfoRow">
+                <Grid ColumnDefinitions="140,*" ColumnSpacing="8">
+                  <Label Text="{Binding Label}" Style="{StaticResource Muted}" FontSize="13" />
+                  <Label Grid.Column="1" Text="{Binding Value}" FontSize="13" />
+                </Grid>
+              </DataTemplate>
+            </BindableLayout.ItemTemplate>
+          </VerticalStackLayout>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+            <Button Text="状態を読む" Style="{StaticResource OutlineButton}" Command="{Binding LoadBusStatusCommand}" />
+            <Button Grid.Column="1" Text="バスを復帰" Style="{StaticResource OutlineButton}" Command="{Binding RecoverBusCommand}" />
+          </Grid>
+        </VerticalStackLayout>
+      </Border>
+
+      <Label Text="記録" Style="{StaticResource SectionTitle}" />
+      <Border Style="{StaticResource Card}">
+        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+          <Label Text="記録の間隔 [秒]" VerticalOptions="Center" />
+          <Picker Grid.Column="1" WidthRequest="90" ItemsSource="{Binding RecordIntervals}"
+                  SelectedItem="{Binding Main.RecordIntervalSec}"
+                  IsEnabled="{Binding Main.IsRecording, Converter={StaticResource Not}}" />
+          <Label Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource Muted}"
+                 Text="記録中は変えられません。記録は CSV で、子機とチャネルごとに値と状態 (0 = 正常) の列を出します。" />
+        </Grid>
+      </Border>
+
+      <Label Text="模擬モード" Style="{StaticResource SectionTitle}" />
+      <Border Style="{StaticResource Card}">
+        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+          <Label Text="模擬の Link と子機を使う" VerticalOptions="Center" />
+          <Switch Grid.Column="1" IsToggled="{Binding IsDemo}" OnColor="{StaticResource Primary}" />
+          <Label Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource Muted}"
+                 Text="実機なしで画面と記録を試すためのもの。値は作り物です。実機をつなぐと自動で実機に切り替わります。" />
+        </Grid>
+      </Border>
+
+      <Label Text="{Binding AppVersion}" Style="{StaticResource Muted}" HorizontalOptions="Center" Margin="0,16,0,0" />
+    </VerticalStackLayout>
+  </ScrollView>
+</ContentPage>

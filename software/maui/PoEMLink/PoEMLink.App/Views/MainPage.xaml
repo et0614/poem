@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:PoEMLink.App.ViewModels"
+             x:Class="PoEMLink.App.Views.MainPage"
+             x:DataType="vm:MainViewModel"
+             Style="{StaticResource PageStyle}"
+             Title="計測">
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- 接続の状態 -->
+    <VerticalStackLayout Grid.Row="0" Padding="16,10,16,4" Spacing="2">
+      <HorizontalStackLayout Spacing="8">
+        <Ellipse WidthRequest="10" HeightRequest="10" VerticalOptions="Center"
+                 Fill="{AppThemeBinding Light={StaticResource Gray300}, Dark={StaticResource Gray500}}">
+          <Ellipse.Triggers>
+            <DataTrigger TargetType="Ellipse" Binding="{Binding IsConnected}" Value="True">
+              <Setter Property="Fill" Value="{StaticResource Primary}" />
+            </DataTrigger>
+          </Ellipse.Triggers>
+        </Ellipse>
+        <Label Text="{Binding ConnectionText}" FontSize="13" VerticalOptions="Center" LineBreakMode="TailTruncation" />
+      </HorizontalStackLayout>
+      <Label Text="{Binding ErrorText}" Style="{StaticResource Muted}" TextColor="#E03131"
+             IsVisible="{Binding ErrorText, Converter={StaticResource HasText}}" />
+      <Label Text="{Binding UnknownText}" Style="{StaticResource Muted}"
+             IsVisible="{Binding UnknownText, Converter={StaticResource HasText}}" />
+    </VerticalStackLayout>
+
+    <!-- 子機の一覧 -->
+    <CollectionView Grid.Row="1" ItemsSource="{Binding Nodes}" Margin="12,0"
+                    SelectionMode="Single" SelectedItem="{Binding SelectedNode}">
+      <CollectionView.ItemsLayout>
+        <LinearItemsLayout Orientation="Vertical" ItemSpacing="10" />
+      </CollectionView.ItemsLayout>
+
+      <CollectionView.EmptyView>
+        <Grid Padding="24,48">
+          <!-- 未接続 -->
+          <VerticalStackLayout Spacing="16" IsVisible="{Binding IsConnected, Converter={StaticResource Not}}">
+            <Label Text="PoEM Link を接続してください" FontSize="18" FontAttributes="Bold" HorizontalTextAlignment="Center" />
+            <Label Style="{StaticResource Muted}" FontSize="14" HorizontalTextAlignment="Center"
+                   Text="USB Type-C で PoEM Link をつなぎ、Qwiic で子機をつなぐと、自動で子機を探して計測値を表示します。" />
+            <Button Text="模擬モードで試す" Style="{StaticResource OutlineButton}" HorizontalOptions="Center"
+                    Command="{Binding UseDemoCommand}" />
+          </VerticalStackLayout>
+          <!-- 接続済み・子機なし -->
+          <VerticalStackLayout Spacing="12" IsVisible="{Binding IsConnected}">
+            <Label Text="子機が見つかりません" FontSize="18" FontAttributes="Bold" HorizontalTextAlignment="Center" />
+            <Label Style="{StaticResource Muted}" FontSize="14" HorizontalTextAlignment="Center"
+                   Text="Qwiic のケーブルを確かめてください。つなぐと数秒で表示されます。" />
+          </VerticalStackLayout>
+        </Grid>
+      </CollectionView.EmptyView>
+
+      <CollectionView.ItemTemplate>
+        <DataTemplate x:DataType="vm:NodeViewModel">
+          <Border Style="{StaticResource Card}">
+            <VerticalStackLayout Spacing="6">
+              <Grid ColumnDefinitions="*,Auto">
+                <VerticalStackLayout>
+                  <Label Text="{Binding Title}" FontSize="16" FontAttributes="Bold" LineBreakMode="TailTruncation" />
+                  <Label Text="{Binding Subtitle}" Style="{StaticResource Muted}" />
+                </VerticalStackLayout>
+                <Border Grid.Column="1" BackgroundColor="#E03131" StrokeThickness="0" StrokeShape="RoundRectangle 6"
+                        Padding="8,2" VerticalOptions="Start" IsVisible="{Binding IsOnline, Converter={StaticResource Not}}">
+                  <Label Text="通信失敗" TextColor="White" FontSize="12" />
+                </Border>
+              </Grid>
+
+              <VerticalStackLayout BindableLayout.ItemsSource="{Binding Channels}" Spacing="2">
+                <BindableLayout.ItemTemplate>
+                  <DataTemplate x:DataType="vm:ChannelViewModel">
+                    <Grid ColumnDefinitions="*,Auto,48" ColumnSpacing="6">
+                      <HorizontalStackLayout Spacing="6" VerticalOptions="Center">
+                        <Label Text="{Binding Name}" FontSize="14" VerticalOptions="Center">
+                          <Label.Triggers>
+                            <DataTrigger TargetType="Label" Binding="{Binding IsAuxiliary}" Value="True">
+                              <Setter Property="TextColor" Value="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource Gray300}}" />
+                            </DataTrigger>
+                          </Label.Triggers>
+                        </Label>
+                        <Label Text="{Binding StatusText}" FontSize="11" VerticalOptions="Center"
+                               TextColor="{Binding Kind, Converter={StaticResource StatusColor}}"
+                               IsVisible="{Binding Kind, Converter={StaticResource IsNotOk}}" />
+                      </HorizontalStackLayout>
+                      <Label Grid.Column="1" Text="{Binding ValueText}" FontSize="24" FontAttributes="Bold"
+                             HorizontalTextAlignment="End" VerticalOptions="Center"
+                             TextColor="{Binding Kind, Converter={StaticResource StatusColor}}">
+                        <Label.Triggers>
+                          <DataTrigger TargetType="Label" Binding="{Binding IsAuxiliary}" Value="True">
+                            <Setter Property="FontSize" Value="16" />
+                            <Setter Property="FontAttributes" Value="None" />
+                          </DataTrigger>
+                        </Label.Triggers>
+                      </Label>
+                      <Label Grid.Column="2" Text="{Binding UnitName}" Style="{StaticResource Muted}" FontSize="13"
+                             VerticalOptions="Center" />
+                    </Grid>
+                  </DataTemplate>
+                </BindableLayout.ItemTemplate>
+              </VerticalStackLayout>
+            </VerticalStackLayout>
+          </Border>
+        </DataTemplate>
+      </CollectionView.ItemTemplate>
+
+      <CollectionView.Footer>
+        <BoxView HeightRequest="12" Color="Transparent" />
+      </CollectionView.Footer>
+    </CollectionView>
+
+    <!-- 記録 -->
+    <Border Grid.Row="2" StrokeThickness="0" Padding="16,10"
+            BackgroundColor="{AppThemeBinding Light={StaticResource CardLight}, Dark={StaticResource CardDark}}">
+      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+        <Label Text="{Binding RecordText}" FontSize="13" VerticalOptions="Center" LineBreakMode="TailTruncation" />
+        <Button Grid.Column="1" Text="書き出し" Style="{StaticResource OutlineButton}"
+                IsVisible="{Binding HasRecord}" Command="{Binding ExportCommand}" />
+        <Button Grid.Column="2" Text="{Binding RecordButtonText}" Command="{Binding ToggleRecordCommand}" MinimumWidthRequest="110">
+          <Button.Triggers>
+            <DataTrigger TargetType="Button" Binding="{Binding IsRecording}" Value="True">
+              <Setter Property="BackgroundColor" Value="#E03131" />
+            </DataTrigger>
+          </Button.Triggers>
+        </Button>
+      </Grid>
+    </Border>
+  </Grid>
+</ContentPage>

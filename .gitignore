@@ -486,6 +486,8 @@ FodyWeavers.xsd
 *.exe
 *.out
 *.app
+# MAUI アプリのプロジェクトのフォルダ (PoEMLink.App) は実行ファイルではないので除外しない
+!PoEMLink.App/
 *.i*86
 *.x86_64
 *.hex

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- PoEM Link の通信 (L3) と OSL v2 の解釈 (L4)、実機なしで動かすための模擬。
+       MAUI に依存しないので、アプリ・単体試験・コマンドラインの道具から共通に使う。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>PoEMLink</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:PoEMLink.App.ViewModels"
+             x:Class="PoEMLink.App.Views.NodeDetailPage"
+             x:DataType="vm:NodeDetailViewModel"
+             Style="{StaticResource PageStyle}"
+             Title="{Binding Node.Title}">
+
+  <ScrollView>
+    <VerticalStackLayout Padding="12,4,12,24" Spacing="4">
+
+      <Label Text="操作" Style="{StaticResource SectionTitle}" />
+      <Border Style="{StaticResource Card}">
+        <VerticalStackLayout Spacing="8">
+          <Button Text="名前を変える" Command="{Binding RenameCommand}" IsEnabled="{Binding IsBusy, Converter={StaticResource Not}}" />
+          <Button Text="I²C アドレスを変える" Style="{StaticResource OutlineButton}" Command="{Binding ChangeAddressCommand}"
+                  IsEnabled="{Binding IsBusy, Converter={StaticResource Not}}" />
+          <Button Text="LED を点滅させる (5 秒)" Style="{StaticResource OutlineButton}" Command="{Binding IdentifyCommand}"
+                  IsVisible="{Binding CanIdentify}" />
+          <ActivityIndicator IsRunning="{Binding IsBusy}" IsVisible="{Binding IsBusy}" Color="{StaticResource Primary}" />
+        </VerticalStackLayout>
+      </Border>
+
+      <Label Text="識別" Style="{StaticResource SectionTitle}" />
+      <Border Style="{StaticResource Card}">
+        <VerticalStackLayout BindableLayout.ItemsSource="{Binding IdentityRows}" Spacing="6">
+          <BindableLayout.ItemTemplate>
+            <DataTemplate x:DataType="vm:InfoRow">
+              <Grid ColumnDefinitions="110,*" ColumnSpacing="8">
+                <Label Text="{Binding Label}" Style="{StaticResource Muted}" FontSize="13" />
+                <Label Grid.Column="1" Text="{Binding Value}" FontSize="13" LineBreakMode="CharacterWrap" />
+              </Grid>
+            </DataTemplate>
+          </BindableLayout.ItemTemplate>
+        </VerticalStackLayout>
+      </Border>
+
+      <Grid ColumnDefinitions="*,Auto">
+        <Label Text="稼働の状態" Style="{StaticResource SectionTitle}" />
+        <Button Grid.Column="1" Text="更新" FontSize="12" Padding="10,0" HeightRequest="32" Margin="0,8,0,0"
+                Style="{StaticResource OutlineButton}" Command="{Binding LoadStatusCommand}" />
+      </Grid>
+      <Border Style="{StaticResource Card}">
+        <VerticalStackLayout BindableLayout.ItemsSource="{Binding StatusRows}" Spacing="6">
+          <BindableLayout.ItemTemplate>
+            <DataTemplate x:DataType="vm:InfoRow">
+              <Grid ColumnDefinitions="110,*" ColumnSpacing="8">
+                <Label Text="{Binding Label}" Style="{StaticResource Muted}" FontSize="13" />
+                <Label Grid.Column="1" Text="{Binding Value}" FontSize="13" />
+              </Grid>
+            </DataTemplate>
+          </BindableLayout.ItemTemplate>
+        </VerticalStackLayout>
+      </Border>
+
+    </VerticalStackLayout>
+  </ScrollView>
+</ContentPage>
