@@ -5,22 +5,25 @@ using BaCSharp;
 namespace PoEMServer.BACnet
 {
     /// <summary>
-    /// 親機 (poem_pod) 1 台ぶんの BACnet Device。MQTT v2 のメッセージを BACnet オブジェクトへ反映する。
+    /// PoEMServer の BACnet Device (サーバ 1 台につき 1 つ)。MQTT v2 のメッセージを BACnet オブジェクトへ反映する。
     ///
-    /// 親機ごとに Device を分ける (Device インスタンス番号と UDP ポートは PodRegistry が決める)。
-    /// 子機は親機の走査時に config を、毎秒 data を publish する。本クラスは:
-    ///   - 初めて受け取った I²C アドレスについては BACnet オブジェクトを動的に生成する
-    ///   - 既知の子機については data を受け取るたびに PRESENT_VALUE を更新する
+    /// Device インスタンス番号とポートはサーバの設定で決める (既定はポート 47808、番号は bacip の末尾)。
+    /// 親機はポートでは分けず、オブジェクトのインスタンス番号の範囲で分ける:
+    ///   親機の範囲 pbase = 親機の番号 × 12000 (番号は PodRegistry が振り、PodMap.json に保存する)
+    ///   子機の範囲 base  = pbase + I²C アドレス × 100 (アドレス 8..119 → pbase+800..pbase+11999)
+    /// 番号の上限 (4194302) から、親機は 349 台まで扱える。
+    /// 管理単位は「親機内のアドレス = 物理配置」。センサを交換して同じアドレスに別個体を付けても
+    /// インスタンス番号は変わらず、Device ID がプロパティとして更新される。
     ///
-    /// BACnet インスタンス番号は子機の I²C アドレスから固定的に決まる (base = adr × 100):
-    ///   - アドレス範囲 8..119 → base 800..11900。0..99 はデバイス自身用に予約
-    ///   - 管理単位は「親機内のアドレス = 物理配置」。センサを故障交換して同じアドレスに
-    ///     別個体を付けてもインスタンス番号は変わらず、UID がプロパティとして更新される
-    ///   - 子機のアドレスを変更した場合は旧 base のオブジェクトを撤去し、新 base に再生成する
+    /// 親機のオブジェクト (pbase + 0..3):
+    ///   pbase+0  CharStringValue  親機名
+    ///   pbase+1  CharStringValue  親機 ID (MAC アドレス 12 桁)
+    ///   pbase+2  CharStringValue  親機のファームウェアの版
+    ///   pbase+3  CharStringValue  親機の IP アドレス
     ///
-    /// オブジェクト割当 (base = adr × 100):
+    /// 子機のオブジェクト (base = pbase + adr × 100):
     ///   base+0   DateTimeValue    最終受信日時
-    ///   base+1   CharStringValue  UID (16 B の device_id、16 進 32 文字)
+    ///   base+1   CharStringValue  Device ID (16 B の UID の FNV-1a 22bit。v1 の device_id と同じ値。説明に UID を記す)
     ///   base+2   CharStringValue  名前 (子機の EEPROM に保存されている呼び名)
     ///   base+3   AnalogInput      異常チャネルのビット (bit i = チャネル i の状態が正常でない)
     ///   base+4   AnalogInput      sample_seq
@@ -47,7 +50,10 @@ namespace PoEMServer.BACnet
         /// </summary>
         private const string DATE_TIME_FORMAT = "yyyy/MM/dd-HH:mm:ss.";
 
-        /// <summary>子機 1 つあたりの BACnet Instance 番号確保枠 (base = I²Cアドレス × この値)</summary>
+        /// <summary>親機 1 台あたりのインスタンス番号の範囲 (pbase = 親機の番号 × この値)</summary>
+        public const uint POD_BLOCK = 12000;
+
+        /// <summary>子機 1 台あたりのインスタンス番号の範囲 (base = pbase + I²C アドレス × この値)</summary>
         private const uint INSTANCE_BLOCK = 100;
 
         /// <summary>1 子機が公開できるチャネルの上限 (OSL 共通レジスタ v2 と同じ)</summary>
@@ -78,70 +84,75 @@ namespace PoEMServer.BACnet
 
         public BACnetCommunicator Communicator { get; private set; }
 
-        /// <summary>親機 ID (MAC アドレス 12 桁)</summary>
-        public string PodId { get; }
+        /// <summary>親機の番号 (PodMap.json) を振る</summary>
+        private readonly PodRegistry registry;
 
-        /// <summary>I²C アドレス → ChildNode の登録表</summary>
-        private readonly Dictionary<byte, ChildNode> childrenByAddr = new();
+        /// <summary>親機 ID → 親機の登録情報</summary>
+        private readonly Dictionary<string, PodNode> pods = new();
 
-        /// <summary>storage / children を保護するロック</summary>
+        /// <summary>storage / pods を保護するロック</summary>
         private readonly object syncLock = new();
 
         #endregion
 
         #region コンストラクタ
 
-        /// <param name="podId">親機 ID (MAC アドレス 12 桁)</param>
         /// <param name="templatePath">Device オブジェクトのひな形 (PoEMDeviceStorage.xml)</param>
-        /// <param name="deviceInstance">この親機の BACnet Device インスタンス番号</param>
-        /// <param name="exclusivePort">この親機の BACnet/IP の専用ポート</param>
+        /// <param name="deviceInstance">BACnet Device インスタンス番号</param>
+        /// <param name="deviceName">BACnet Device の名前</param>
+        /// <param name="port">BACnet/IP の UDP ポート (既定 47808)</param>
         /// <param name="localEndPointAddress">BACnet/IP で使う自分の IP アドレス</param>
-        public PoEMDevice(string podId, string templatePath, uint deviceInstance, int exclusivePort, string localEndPointAddress)
+        /// <param name="registry">親機の番号の対応 (PodMap.json)</param>
+        public PoEMDevice(string templatePath, uint deviceInstance, string deviceName, int port, string localEndPointAddress, PodRegistry registry)
         {
-            PodId = podId;
+            this.registry = registry;
             DeviceStorage storage = DeviceStorage.Load(templatePath, deviceInstance);
-            Communicator = new BACnetCommunicator(storage, exclusivePort, localEndPointAddress);
-            SetDeviceName($"PoEM_{podId}");
+            Communicator = new BACnetCommunicator(storage, port, localEndPointAddress);
+            SetDeviceName(deviceName);
         }
 
         #endregion
 
         #region 公開メソッド
 
-        /// <summary>poem/&lt;pod&gt;/pod/info: 親機名を Device の名前に反映する</summary>
-        public void OnPodInfo(PodInfoPayload info)
+        /// <summary>poem/&lt;pod&gt;/pod/info: 親機の名前・版・IP を反映する</summary>
+        public void OnPodInfo(string podId, PodInfoPayload info)
         {
             lock (syncLock)
             {
-                string name = string.IsNullOrWhiteSpace(info.Name) ? PodId : info.Name.Trim();
-                SetDeviceName($"PoEM_{name}");
+                var pod = GetPod(podId);
+                string name = string.IsNullOrWhiteSpace(info.Name) ? podId : info.Name.Trim();
+                WriteCharString(pod.Base + 0u, name);
+                WriteCharString(pod.Base + 2u, info.Firmware ?? "");
+                WriteCharString(pod.Base + 3u, info.Ip ?? "");
             }
         }
 
         /// <summary>
         /// poem/&lt;pod&gt;/node/&lt;adr&gt;/config: 新規アドレスならオブジェクトを生成し、既知なら変更を反映する。
         /// </summary>
-        public void OnConfig(byte adr, NodeConfigPayload config)
+        public void OnConfig(string podId, byte adr, NodeConfigPayload config)
         {
             if (adr < I2C_ADDR_MIN || adr > I2C_ADDR_MAX) return;
             lock (syncLock)
             {
+                var pod = GetPod(podId);
                 var channels = SanitizeChannels(config.Channels);
 
                 // 同じ UID が別アドレスで登録済み → 子機のアドレス変更。旧ブロックを撤去する。
-                var moved = childrenByAddr.Values.FirstOrDefault(c => c.Uid == config.Uid && c.I2cAddr != adr);
+                var moved = pod.Children.Values.FirstOrDefault(c => c.Uid == config.Uid && c.I2cAddr != adr);
                 if (moved != null)
                 {
-                    Console.WriteLine($"[INFO] pod {PodId}: uid {config.Uid} moved from I2C address {moved.I2cAddr} to {adr}. Rebuilding BACnet objects.");
+                    Console.WriteLine($"[INFO] pod {podId}: uid {config.Uid} moved from I2C address {moved.I2cAddr} to {adr}. Rebuilding BACnet objects.");
                     RemoveBacnetObjects(moved);
-                    childrenByAddr.Remove(moved.I2cAddr);
+                    pod.Children.Remove(moved.I2cAddr);
                 }
 
-                if (!childrenByAddr.TryGetValue(adr, out ChildNode? child))
+                if (!pod.Children.TryGetValue(adr, out ChildNode? child))
                 {
-                    child = new ChildNode { I2cAddr = adr, InstanceBase = adr * INSTANCE_BLOCK };
+                    child = new ChildNode { Pod = pod, I2cAddr = adr, InstanceBase = pod.Base + adr * INSTANCE_BLOCK };
                     child.Apply(config, channels);
-                    childrenByAddr[adr] = child;
+                    pod.Children[adr] = child;
                     CreateBacnetObjects(child);
                     return;
                 }
@@ -151,7 +162,7 @@ namespace PoEMServer.BACnet
                 if (child.Uid != config.Uid || !child.SameLayout(channels))
                 {
                     if (child.Uid != config.Uid)
-                        Console.WriteLine($"[INFO] pod {PodId}: I2C address {adr}: device replaced ({child.Uid} -> {config.Uid}). Rebuilding BACnet objects.");
+                        Console.WriteLine($"[INFO] pod {podId}: I2C address {adr}: device replaced ({child.Uid} -> {config.Uid}). Rebuilding BACnet objects.");
                     RemoveBacnetObjects(child);
                     child.Apply(config, channels);
                     CreateBacnetObjects(child);
@@ -170,11 +181,11 @@ namespace PoEMServer.BACnet
         /// <summary>
         /// poem/&lt;pod&gt;/node/&lt;adr&gt;/data: 計測値と状態を反映する。config 未受信のアドレスは無視する (config 待ち)。
         /// </summary>
-        public void OnData(byte adr, NodeDataPayload data)
+        public void OnData(string podId, byte adr, NodeDataPayload data)
         {
             lock (syncLock)
             {
-                if (!childrenByAddr.TryGetValue(adr, out ChildNode? child)) return;
+                if (!pods.TryGetValue(podId, out PodNode? pod) || !pod.Children.TryGetValue(adr, out ChildNode? child)) return;
 
                 uint b = child.InstanceBase;
                 int n = child.Channels.Length;
@@ -210,18 +221,58 @@ namespace PoEMServer.BACnet
         }
 
         /// <summary>poem/&lt;pod&gt;/node/&lt;adr&gt;/diag: 稼働時間を反映する</summary>
-        public void OnDiag(byte adr, NodeDiagPayload diag)
+        public void OnDiag(string podId, byte adr, NodeDiagPayload diag)
         {
             lock (syncLock)
             {
-                if (!childrenByAddr.TryGetValue(adr, out ChildNode? child)) return;
+                if (!pods.TryGetValue(podId, out PodNode? pod) || !pod.Children.TryGetValue(adr, out ChildNode? child)) return;
                 WriteAnalogInput(child.InstanceBase + 9u, diag.UptimeSec);
             }
+        }
+
+        /// <summary>
+        /// 16 B の UID から Device ID (22bit) を求める。v1 の子機ファームウェアの fnv1a_22 と同じ計算で、
+        /// v2 の UID は v1 がハッシュしていたマイコン固有番号 (SIGROW.SERNUM) そのものなので、
+        /// 同じ子機なら v1 の device_id と同じ値になる。
+        /// FNV-1a (32bit) を XOR で 22bit に畳み、BACnet の予約値 0x3FFFFF を避ける。
+        /// </summary>
+        public static uint DeviceIdOf(string uidHex)
+        {
+            byte[] bytes;
+            try { bytes = Convert.FromHexString(uidHex); }
+            catch (FormatException) { return 0; }
+
+            uint h = 2166136261u;
+            foreach (byte x in bytes)
+            {
+                h ^= x;
+                h *= 16777619u;
+            }
+            h = (h ^ (h >> 22)) & 0x3FFFFFu;
+            return h == 0x3FFFFFu ? 0x3FFFFEu : h;
         }
 
         #endregion
 
         #region BACnet オブジェクト生成 / 更新
+
+        /// <summary>親機の登録情報を返す。初めての親機なら番号を振り、親機のオブジェクトを作る</summary>
+        private PodNode GetPod(string podId)
+        {
+            if (pods.TryGetValue(podId, out PodNode? pod)) return pod;
+
+            int index = registry.IndexOf(podId);
+            pod = new PodNode { Id = podId, Index = index, Base = (uint)index * POD_BLOCK };
+            pods[podId] = pod;
+
+            string p = PodPrefix(pod);
+            AddCharString(pod.Base + 0u, $"{p}_POD_NAME", $"Name of pod {podId}", podId);
+            AddCharString(pod.Base + 1u, $"{p}_POD_ID",   $"MAC address of pod {podId}", podId);
+            AddCharString(pod.Base + 2u, $"{p}_POD_FW",   $"Firmware version of pod {podId}", "");
+            AddCharString(pod.Base + 3u, $"{p}_POD_IP",   $"IP address of pod {podId}", "");
+            Console.WriteLine($"[INFO] pod {podId}: index {index}, BACnet instances {pod.Base}..{pod.Base + POD_BLOCK - 1}.");
+            return pod;
+        }
 
         private void CreateBacnetObjects(ChildNode child)
         {
@@ -232,7 +283,7 @@ namespace PoEMServer.BACnet
             System.Array.Fill(child.LastStatus, 0u);
 
             AddDateTimeValue(b + 0u, $"{disp}_DT",    $"Last data publish time of {disp}", DateTime.Now);
-            AddCharString  (b + 1u, $"{disp}_UID",   $"Device ID (16 bytes) of {disp}", child.Uid);
+            AddCharString  (b + 1u, $"{disp}_ID",    $"Device ID (FNV-1a 22bit of UID {child.Uid}) of {disp}", DeviceIdOf(child.Uid).ToString());
             AddCharString  (b + 2u, $"{disp}_NAME",  $"Configured label of {disp}", child.Name);
             AddAnalogInput (b + 3u, $"{disp}_FAULT", $"Faulty channel bits of {disp}", 0, BACNET_UNITS_NO_UNITS);
             AddAnalogInput (b + 4u, $"{disp}_SEQ",   $"Sample sequence of {disp}", 0, BACNET_UNITS_NO_UNITS);
@@ -403,24 +454,37 @@ namespace PoEMServer.BACnet
                 : $"0x{model:X4}";
         }
 
+        /// <summary>親機を表すオブジェクト名の接頭辞 (P00, P01, …)</summary>
+        private static string PodPrefix(PodNode pod) => $"P{pod.Index:D2}";
+
         /// <summary>
         /// BACnet オブジェクト名のベース文字列。デバイス内で Object_Name の一意性が要求されるため、
-        /// I²C アドレス由来のプレフィックス (A008..A119) を必ず付ける (子機の名前の重複対策)。
+        /// 親機の番号と I²C アドレス由来の接頭辞 (P00_A016 など) を必ず付ける (子機の名前の重複対策)。
         /// </summary>
         private static string DisplayName(ChildNode child)
         {
             string n = child.Name?.Trim() ?? "";
-            string label = string.IsNullOrEmpty(n)
-                ? $"Node_{(child.Uid.Length >= 8 ? child.Uid[^8..] : child.Uid)}"
-                : n;
-            return $"A{child.I2cAddr:D3}_{label}";
+            string label = string.IsNullOrEmpty(n) ? $"Node_{DeviceIdOf(child.Uid)}" : n;
+            return $"{PodPrefix(child.Pod)}_A{child.I2cAddr:D3}_{label}";
         }
 
         #endregion
 
+        /// <summary>親機 1 台の登録情報</summary>
+        private sealed class PodNode
+        {
+            public string Id = "";
+            public int Index;
+            public uint Base;
+
+            /// <summary>I²C アドレス → 子機</summary>
+            public readonly Dictionary<byte, ChildNode> Children = new();
+        }
+
         /// <summary>子機 1 つの登録情報 (PoEMDevice 内部のみで使用)</summary>
         private sealed class ChildNode
         {
+            public PodNode Pod = null!;
             public byte I2cAddr;
             public uint InstanceBase;
             public string Uid = "";

@@ -67,8 +67,8 @@ namespace BaCSharp
 
     /// <summary>インスタンスを初期化する</summary>
     /// <param name="storage"></param>
-    /// <param name="exclusivePort"></param>
-    public BACnetCommunicator(DeviceStorage storage, int exclusivePort, string localEndPointIP)
+    /// <param name="port">BACnet/IP の UDP ポート。標準は 47808 (0xBAC0)</param>
+    public BACnetCommunicator(DeviceStorage storage, int port, string localEndPointIP)
     {
       m_storage = storage;
 
@@ -77,15 +77,12 @@ namespace BaCSharp
       m_storage.ReadOverride += new DeviceStorage.ReadOverrideHandler(m_storage_ReadOverride);
 
       //BACnetClientを作成
-      BacnetIpUdpProtocolTransport bUDP = new BacnetIpUdpProtocolTransport(
-        0xBAC0, exclusivePort, false, 1472, localEndPointIP);
-      //BacnetIpUdpProtocolTransport bUDP;
-      //標準ポートの場合には排他的に0xBAC0（47808）を使えると仮定
-      //if (bacPort == 0xBAC0) bUDP = new BacnetIpUdpProtocolTransport(0xBAC0, true, false, 1472, localEndPointIP);
-      //それ以外のポートの場合には排他的に使えないと仮定し、ブロードキャスト用の0xBAC0と他の排他的ポートを組み合わせる
-      //else bUDP = new BacnetIpUdpProtocolTransport(0xBAC0, bacPort, false, 1472, localEndPointIP);
-      //2025.11.28修正：常に排他的に使う設定とする
-      //bUDP = new BacnetIpUdpProtocolTransport(0xBAC0, bacPort, false, 1472, localEndPointIP);
+      //標準ポート (47808) はそのまま使う。サーバごとに IP アドレスを分けて、同じポートで複数台を置ける。
+      //それ以外のポートを指定したときは、ブロードキャスト (Who-Is) を受けるための 47808 と、
+      //その専用ポートを組み合わせる (2025.11.28 の排他的ポートの方式)。
+      BacnetIpUdpProtocolTransport bUDP = port == 0xBAC0
+        ? new BacnetIpUdpProtocolTransport(0xBAC0, false, false, 1472, localEndPointIP)
+        : new BacnetIpUdpProtocolTransport(0xBAC0, port, false, 1472, localEndPointIP);
 
       m_ip_server = new BacnetClient(bUDP);
 

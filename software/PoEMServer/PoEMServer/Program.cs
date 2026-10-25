@@ -11,8 +11,8 @@ namespace PoEMServer
     /// PoEM 親機 (poem_pod) 用 MQTT ブローカ + BACnet ブリッジ。
     ///
     /// 親機は OSL 共通レジスタ v2 の子機を読み、MQTT v2 で publish する (NodePayloads.cs)。
-    /// 本サーバはこれを受け取り、親機ごとに BACnet Device を作り (PodRegistry)、
-    /// 子機ごとに BACnet オブジェクトを動的に生成・更新する (PoEMDevice)。
+    /// 本サーバはこれを 1 つの BACnet Device (PoEMDevice) として公開し、親機ごとのインスタンス番号の
+    /// 範囲 (PodRegistry) の中に、子機ごとの BACnet オブジェクトを動的に生成・更新する。
     /// </summary>
     internal class Program
     {
@@ -20,7 +20,7 @@ namespace PoEMServer
 
         private static readonly Dictionary<string, string> initSettings = new();
         private static bool writeToConsole = true;
-        private static PodRegistry? pods;
+        private static PoEMDevice? device;
 
         #endregion
 
@@ -30,15 +30,41 @@ namespace PoEMServer
 
             if (!loadInitFile()) return;
 
-            // 親機ごとの BACnet Device は、最初のメッセージを受け取ったときに作る。
-            // Device インスタンス番号 = bacdevice + 親機の番号、ポート = bacport + 親機の番号。
+            // BACnet Device はサーバに 1 つ。親機はポートではなくオブジェクトのインスタンス番号の範囲で分ける。
             string template = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PoEMDeviceStorage.xml");
-            uint deviceBase = uint.Parse(initSettings.GetValueOrDefault("bacdevice", "0"));
-            pods = new PodRegistry(template, deviceBase, int.Parse(initSettings["bacport"]), initSettings["bacip"]);
+            string bacip = initSettings["bacip"];
+            if (!TryGetDeviceInstance(bacip, out uint deviceInstance)) return;
+            int port = int.Parse(initSettings.GetValueOrDefault("bacport", "47808"));
+            string name = initSettings.GetValueOrDefault("bacname", $"PoEM_Server_{deviceInstance}");
+            device = new PoEMDevice(template, deviceInstance, name, port, bacip, new PodRegistry());
+            Console.WriteLine($"BACnet Device {deviceInstance} \"{name}\" on {bacip}:{port}");
 
             bool.TryParse(initSettings["console"], out writeToConsole);
 
             await RunMqttBroker();
+        }
+
+        /// <summary>
+        /// Device インスタンス番号。bacdevice が auto (または未設定) なら bacip の末尾の数
+        /// (192.168.100.25 → 25)。現場では「サーバの IP の末尾 = Device ID」と決めている。
+        /// </summary>
+        private static bool TryGetDeviceInstance(string bacip, out uint instance)
+        {
+            string v = initSettings.GetValueOrDefault("bacdevice", "auto");
+            if (!v.Equals("auto", StringComparison.OrdinalIgnoreCase))
+            {
+                if (uint.TryParse(v, out instance) && instance <= 4194302) return true;
+                Console.WriteLine($"[ERROR] bacdevice={v} is not a valid BACnet device instance (0-4194302 or auto).");
+                return false;
+            }
+            if (IPAddress.TryParse(bacip, out var ip) && ip.GetAddressBytes() is { Length: 4 } b)
+            {
+                instance = b[3];
+                return true;
+            }
+            Console.WriteLine($"[ERROR] cannot derive the device instance from bacip={bacip}. Set bacdevice explicitly.");
+            instance = 0;
+            return false;
         }
 
         private static void showTitle()
@@ -46,7 +72,7 @@ namespace PoEMServer
             Console.WriteLine();
             Console.WriteLine("#########################################################################");
             Console.WriteLine("#                                                                       #");
-            Console.WriteLine("#                  PoEMServer  version 2.0.0 (OSL v2)                    #");
+            Console.WriteLine("#                  PoEMServer  version 2.1.0 (OSL v2)                    #");
             Console.WriteLine("#                                                                       #");
             Console.WriteLine("#########################################################################");
             Console.WriteLine();
@@ -158,7 +184,7 @@ namespace PoEMServer
                 if (t[3] == "info")
                 {
                     var info = JsonSerializer.Deserialize<PodInfoPayload>(payload);
-                    if (info != null) pods!.Get(podId).OnPodInfo(info);
+                    if (info != null) device!.OnPodInfo(podId, info);
                 }
                 return;     // pod/diag はログに出すだけ
             }
@@ -168,15 +194,15 @@ namespace PoEMServer
             {
                 case "config":
                     var cfg = JsonSerializer.Deserialize<NodeConfigPayload>(payload);
-                    if (cfg != null) pods!.Get(podId).OnConfig(adr, cfg);
+                    if (cfg != null) device!.OnConfig(podId, adr, cfg);
                     break;
                 case "data":
                     var data = JsonSerializer.Deserialize<NodeDataPayload>(payload);
-                    if (data != null) pods!.Get(podId).OnData(adr, data);
+                    if (data != null) device!.OnData(podId, adr, data);
                     break;
                 case "diag":
                     var diag = JsonSerializer.Deserialize<NodeDiagPayload>(payload);
-                    if (diag != null) pods!.Get(podId).OnDiag(adr, diag);
+                    if (diag != null) device!.OnDiag(podId, adr, diag);
                     break;
             }
         }
