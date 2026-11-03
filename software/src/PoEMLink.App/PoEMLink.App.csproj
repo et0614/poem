@@ -3,6 +3,10 @@
 	<PropertyGroup>
 		<TargetFrameworks>net10.0-android;net10.0-ios</TargetFrameworks>
 		<TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net10.0-windows10.0.19041.0</TargetFrameworks>
+		<!-- CI で iOS だけをビルドするための切り替え (-p:PoEMLinkIosOnly=true)。
+		     -p:TargetFrameworks=net10.0-ios で絞ると、参照先の PoEM.Common・PoEMLink.Core (net10.0) にも伝わって
+		     iOS 向けに復元され、ビルドに失敗する。この名前の設定はこのプロジェクトしか見ない -->
+		<TargetFrameworks Condition="'$(PoEMLinkIosOnly)'=='true'">net10.0-ios</TargetFrameworks>
 
 		<OutputType>Exe</OutputType>
 		<RootNamespace>PoEMLink.App</RootNamespace>

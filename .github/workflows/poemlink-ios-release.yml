@@ -118,13 +118,15 @@ jobs:
           echo "$PROVISION_BASE64" | base64 --decode \
             > "$HOME/Library/MobileDevice/Provisioning Profiles/poemlink_dist_ci.mobileprovision"
 
-      # TargetFrameworks を iOS だけに絞る（プロジェクトは Android も対象にしており、絞らないと
-      # 復元時に Android のワークロードも要求される。上では iOS のワークロードしか入れていない）
+      # 対象を iOS だけに絞る（プロジェクトは Android も対象にしており、絞らないと復元時に Android の
+      # ワークロードも要求される。上では iOS のワークロードしか入れていない）。
+      # E-Sensor のように -p:TargetFrameworks=net10.0-ios で絞ると、参照先のライブラリ (net10.0) にも
+      # 伝わって失敗するので、アプリのプロジェクトだけが見る PoEMLinkIosOnly で切り替える。
       - name: Build ipa
         run: >
           dotnet publish software/src/PoEMLink.App/PoEMLink.App.csproj
           -f net10.0-ios -c Release
-          -p:TargetFrameworks=net10.0-ios
+          -p:PoEMLinkIosOnly=true
           -p:RuntimeIdentifier=ios-arm64
           -p:ArchiveOnBuild=true
           -p:ApplicationVersion=${{ github.run_number }}
