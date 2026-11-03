@@ -106,8 +106,9 @@
         </DataTemplate>
       </CollectionView.ItemTemplate>
 
+      <!-- 末尾の余白。BoxView だと Android のダークモードで色付きの帯になるので、中身の無い ContentView を使う -->
       <CollectionView.Footer>
-        <BoxView HeightRequest="12" Color="Transparent" />
+        <ContentView HeightRequest="12" />
       </CollectionView.Footer>
     </CollectionView>
 
