@@ -5,6 +5,9 @@
 	<!-- iOS 26 で MAUI のアプリが落ちる問題の対策 (M-Logger と同じ。2025.12.15) -->
 	<key>UIDesignRequiresCompatibility</key>
 	<true/>
+	<!-- 独自の暗号化は使っていない (App Store 提出時の輸出規制の質問を省く) -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIDeviceFamily</key>
