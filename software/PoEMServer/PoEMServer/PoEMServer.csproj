@@ -14,6 +14,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\PoEM.Common\PoEM.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="PoEMDeviceStorage.xml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

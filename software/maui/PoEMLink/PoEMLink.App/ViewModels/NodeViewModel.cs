@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using PoEM.Common;
 using PoEMLink.App.Services;
 using PoEMLink.Recording;
 using PoEMLink.Osl;

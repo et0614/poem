@@ -1,6 +1,7 @@
 ﻿using System.IO.BACnet;
 using System.IO.BACnet.Storage;
 using BaCSharp;
+using PoEM.Common;
 
 namespace PoEMServer.BACnet
 {
@@ -66,17 +67,6 @@ namespace PoEMServer.BACnet
         private const ushort BACNET_UNITS_NO_UNITS = 95;
         private const ushort BACNET_UNITS_SECONDS  = 73;
         private const uint   BACNET_RELIABILITY_NO_FAULT_DETECTED = 0;
-
-        /// <summary>機種の表示名 (仕様 §6.1)</summary>
-        private static readonly Dictionary<ushort, string> MODEL_NAMES = new()
-        {
-            [0x0101] = "温湿度センサ (SHT4x)",
-            [0x0102] = "多点温度センサ (TMP117x3)",
-            [0x0201] = "風速センサ (熱線式)",
-            [0x0301] = "絶対圧センサ (BMP585)",
-            [0x0302] = "差圧センサ (SDP810-125Pa)",
-            [0x0303] = "差圧センサ (SDP810-500Pa)",
-        };
 
         #endregion
 
@@ -230,28 +220,6 @@ namespace PoEMServer.BACnet
             }
         }
 
-        /// <summary>
-        /// 16 B の UID から Device ID (22bit) を求める。v1 の子機ファームウェアの fnv1a_22 と同じ計算で、
-        /// v2 の UID は v1 がハッシュしていたマイコン固有番号 (SIGROW.SERNUM) そのものなので、
-        /// 同じ子機なら v1 の device_id と同じ値になる。
-        /// FNV-1a (32bit) を XOR で 22bit に畳み、BACnet の予約値 0x3FFFFF を避ける。
-        /// </summary>
-        public static uint DeviceIdOf(string uidHex)
-        {
-            byte[] bytes;
-            try { bytes = Convert.FromHexString(uidHex); }
-            catch (FormatException) { return 0; }
-
-            uint h = 2166136261u;
-            foreach (byte x in bytes)
-            {
-                h ^= x;
-                h *= 16777619u;
-            }
-            h = (h ^ (h >> 22)) & 0x3FFFFFu;
-            return h == 0x3FFFFFu ? 0x3FFFFEu : h;
-        }
-
         #endregion
 
         #region BACnet オブジェクト生成 / 更新
@@ -283,7 +251,7 @@ namespace PoEMServer.BACnet
             System.Array.Fill(child.LastStatus, 0u);
 
             AddDateTimeValue(b + 0u, $"{disp}_DT",    $"Last data publish time of {disp}", DateTime.Now);
-            AddCharString  (b + 1u, $"{disp}_ID",    $"Device ID (FNV-1a 22bit of UID {child.Uid}) of {disp}", DeviceIdOf(child.Uid).ToString());
+            AddCharString  (b + 1u, $"{disp}_ID",    $"Device ID (FNV-1a 22bit of UID {child.Uid}) of {disp}", DeviceId.FromUid(child.Uid).ToString());
             AddCharString  (b + 2u, $"{disp}_NAME",  $"Configured label of {disp}", child.Name);
             AddAnalogInput (b + 3u, $"{disp}_FAULT", $"Faulty channel bits of {disp}", 0, BACNET_UNITS_NO_UNITS);
             AddAnalogInput (b + 4u, $"{disp}_SEQ",   $"Sample sequence of {disp}", 0, BACNET_UNITS_NO_UNITS);
@@ -447,12 +415,9 @@ namespace PoEMServer.BACnet
             return ch.Take(MAX_VALUES_PER_NODE).ToArray();
         }
 
+        /// <summary>機種の表示 (名前と model_id)。名前の表は PoEM.Common にある</summary>
         private static string ModelLabel(ushort model)
-        {
-            return MODEL_NAMES.TryGetValue(model, out string? name)
-                ? $"{name} 0x{model:X4}"
-                : $"0x{model:X4}";
-        }
+            => OslTables.TryGetModelName(model, out string name) ? $"{name} 0x{model:X4}" : $"0x{model:X4}";
 
         /// <summary>親機を表すオブジェクト名の接頭辞 (P00, P01, …)</summary>
         private static string PodPrefix(PodNode pod) => $"P{pod.Index:D2}";
@@ -464,7 +429,7 @@ namespace PoEMServer.BACnet
         private static string DisplayName(ChildNode child)
         {
             string n = child.Name?.Trim() ?? "";
-            string label = string.IsNullOrEmpty(n) ? $"Node_{DeviceIdOf(child.Uid)}" : n;
+            string label = string.IsNullOrEmpty(n) ? $"Node_{DeviceId.FromUid(child.Uid)}" : n;
             return $"{PodPrefix(child.Pod)}_A{child.I2cAddr:D3}_{label}";
         }
 

@@ -1,5 +1,0 @@
-<Solution>
-  <Project Path="PoEMLink.App/PoEMLink.App.csproj" />
-  <Project Path="PoEMLink.Core.Tests/PoEMLink.Core.Tests.csproj" />
-  <Project Path="PoEMLink.Core/PoEMLink.Core.csproj" />
-</Solution>

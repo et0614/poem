@@ -9,4 +9,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\PoEM.Common\PoEM.Common.csproj" />
+  </ItemGroup>
+
 </Project>
