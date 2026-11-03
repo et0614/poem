@@ -2,8 +2,8 @@
   "solution": {
     "path": "PoEM.slnx",
     "projects": [
-      "PoEM.Common\\PoEM.Common.csproj",
-      "PoEMServer\\PoEMServer\\PoEMServer.csproj"
+      "src\\PoEM.Common\\PoEM.Common.csproj",
+      "src\\PoEMServer\\PoEMServer.csproj"
     ]
   }
 }

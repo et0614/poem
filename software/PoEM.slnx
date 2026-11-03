@@ -1,13 +1,11 @@
 <Solution>
-  <Folder Name="/Common/">
-    <Project Path="PoEM.Common/PoEM.Common.csproj" />
+  <Folder Name="/src/">
+    <Project Path="src/PoEM.Common/PoEM.Common.csproj" />
+    <Project Path="src/PoEMServer/PoEMServer.csproj" />
+    <Project Path="src/PoEMLink.Core/PoEMLink.Core.csproj" />
+    <Project Path="src/PoEMLink.App/PoEMLink.App.csproj" />
   </Folder>
-  <Folder Name="/Server/">
-    <Project Path="PoEMServer/PoEMServer/PoEMServer.csproj" />
-  </Folder>
-  <Folder Name="/PoEMLink/">
-    <Project Path="maui/PoEMLink/PoEMLink.Core/PoEMLink.Core.csproj" />
-    <Project Path="maui/PoEMLink/PoEMLink.Core.Tests/PoEMLink.Core.Tests.csproj" />
-    <Project Path="maui/PoEMLink/PoEMLink.App/PoEMLink.App.csproj" />
+  <Folder Name="/tests/">
+    <Project Path="tests/PoEMLink.Core.Tests/PoEMLink.Core.Tests.csproj" />
   </Folder>
 </Solution>

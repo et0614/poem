@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\PoEMLink.Core\PoEMLink.Core.csproj" />
+    <ProjectReference Include="..\..\src\PoEMLink.Core\PoEMLink.Core.csproj" />
   </ItemGroup>
 
 </Project>

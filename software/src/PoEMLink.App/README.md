@@ -4,24 +4,25 @@ PoEM Link (USB-MIDI ⇔ I²C ブリッジ) にスマホや PC をつなぎ、OSL
 iOS・Android・Windows (.NET MAUI、net10)。方針は Drive の `PoEM_Linkアプリ_方針.md`、
 通信仕様は `PoEM_Link_通信仕様.md`。
 
-ソリューションは `software/PoEM.slnx` (PoEMServer・PoEM.Common と一緒)。
-サーバだけをビルドするときは `software/PoEMServer.slnf` を使う (MAUI のワークロードが無い環境でもビルドできる)。
+フォルダの構成とソリューションは `software/README.md` を参照。PoEM Link に関わるプロジェクト:
 
 | プロジェクト | 内容 |
 |---|---|
-| `software/PoEM.Common` | サーバとアプリで共通の表 (機種名・単位・状態の名前) と Device ID (22bit) の計算。機種を足すときはここだけを直す |
-| `PoEMLink.Core` | MAUI に依存しない部分。Link のブリッジ層 (`Link/`)、OSL v2 の解釈 (`Osl/`)、記録と CSV (`Recording/`)、Link と子機の模擬 (`Simulation/`) |
-| `PoEMLink.Core.Tests` | 単体試験 (xUnit)。PoEM.Common の試験も含む。模擬の Link と子機を相手に、走査・POLL・名前とアドレスの変更・BATCH の分割まで確かめる |
-| `PoEMLink.App` | MAUI アプリ。画面、OS ごとの MIDI (`Platforms/*/…LinkTransport.cs`、E-Sensor から移植)、記録中のバックグラウンド動作 |
+| `src/PoEM.Common` | サーバとアプリで共通の表 (機種名・単位・状態の名前) と Device ID (22bit) の計算 |
+| `src/PoEMLink.Core` | MAUI に依存しない部分。Link のブリッジ層 (`Link/`)、OSL v2 の解釈 (`Osl/`)、記録と CSV (`Recording/`)、Link と子機の模擬 (`Simulation/`) |
+| `tests/PoEMLink.Core.Tests` | 単体試験 (xUnit)。模擬の Link と子機を相手に、走査・POLL・名前とアドレスの変更・BATCH の分割まで確かめる |
+| `src/PoEMLink.App` | MAUI アプリ (このフォルダ)。画面、OS ごとの MIDI (`Platforms/*/…LinkTransport.cs`、E-Sensor から移植)、記録中のバックグラウンド動作 |
 
 ## ビルドと試験
 
+`software` フォルダで実行する。
+
 ```bash
-dotnet test PoEMLink.Core.Tests
+dotnet test tests/PoEMLink.Core.Tests
 ```
 
 ```bash
-dotnet build PoEMLink.App -f net10.0-windows10.0.19041.0
+dotnet build src/PoEMLink.App -f net10.0-windows10.0.19041.0
 ```
 
 - Android は `-f net10.0-android`、iOS は `-f net10.0-ios` (署名と実機への配布は Mac が要る)。

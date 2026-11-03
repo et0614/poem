@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\PoEM.Common\PoEM.Common.csproj" />
+    <ProjectReference Include="..\PoEM.Common\PoEM.Common.csproj" />
   </ItemGroup>
 
 </Project>
