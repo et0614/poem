@@ -83,8 +83,11 @@ namespace PoEMLink.App.Platforms.iOS
     {
       foreach (var packet in e.Packets)
       {
-        var buffer = packet.ByteArray;
-        if (buffer == null || buffer.Length == 0) continue;
+        // 受信したパケットは ByteArray が空で、データは BytePointer の先にある
+        // (ByteArray に中身が入るのは、アプリ側で byte[] から作ったパケットだけ)
+        if (packet.Length == 0 || packet.BytePointer == IntPtr.Zero) continue;
+        var buffer = new byte[packet.Length];
+        System.Runtime.InteropServices.Marshal.Copy(packet.BytePointer, buffer, 0, packet.Length);
         foreach (var b in buffer)
         {
           if (b == 0xF0) { _sysExBuffer.Clear(); _inSysEx = true; continue; }
