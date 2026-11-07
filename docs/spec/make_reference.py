@@ -97,6 +97,13 @@ def main():
     for name in ("Normal", "Body Text", "First Paragraph", "Compact", "Block Text", "Date", "Author"):
         if name in styles:
             set_fonts(styles[name], BODY_LATIN, BODY_JA, size=10.5)
+    # 本文の段落は 1 字下げる (箇条書き・表の中 (Compact) は下げない)
+    for name in ("Body Text", "First Paragraph"):
+        if name in styles:
+            styles[name].paragraph_format.first_line_indent = Pt(10.5)
+    # 表のセルと詰めた箇条書きは Compact。Body Text を継承するので、字下げを明示的に 0 にする
+    if "Compact" in styles:
+        styles["Compact"].paragraph_format.first_line_indent = Pt(0)
     # 見出し 1 = 章、見出し 2 = 節、見出し 3 = 項
     for name, size in (("Title", 22), ("Subtitle", 13), ("Heading 1", 20), ("Heading 2", 14),
                        ("Heading 3", 11.5), ("Heading 4", 10.5), ("TOC Heading", 16)):
@@ -107,7 +114,8 @@ def main():
     if "Source Code" in styles:
         set_fonts(styles["Source Code"], "Consolas", "BIZ UDゴシック", size=9)
 
-    styles["Heading 1"].paragraph_format.space_before = Pt(0)     # 章は新しいページの先頭から始まる
+    styles["Heading 1"].paragraph_format.space_before = Pt(0)
+    styles["Heading 1"].paragraph_format.page_break_before = True  # 章・付録・前付けは新しいページから始める
     styles["Heading 1"].paragraph_format.space_after = Pt(18)
 
     # 目次: 1 段目 = 章 (強調用フォント)、2 段目 = 節 (一般用フォントで字下げ)。行間を詰めて、全体を 1〜2 ページで見渡せるようにする

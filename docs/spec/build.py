@@ -67,7 +67,8 @@ def main():
         "--metadata-file", str(METADATA),
         # 表紙の日付の欄に版と日付を並べる (pandoc の表紙には版の欄が無いため)
         "-M", f"date=第 {meta.get('version', '')} 版{' (' + meta['status'] + ')' if meta.get('status') else ''}　{meta.get('date', '')}",
-        "-f", "markdown+east_asian_line_breaks",    # 日本語の改行で余計な空白を入れない
+        # 日本語の改行で余計な空白を入れない。引用符を “ ” に変えない (電文の例の " を保つ)
+        "-f", "markdown+east_asian_line_breaks-smart",
         "-o", str(out),
         "--reference-doc", str(REFERENCE),
         "--toc", "--toc-depth=2",                  # 目次は章と節まで (項は入れない)
