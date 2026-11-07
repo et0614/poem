@@ -24,7 +24,7 @@ from build import find_pandoc  # noqa: E402
 HERE = Path(__file__).resolve().parent
 REFERENCE = HERE / "reference.docx"
 
-# フォントは「強調用」(見出し・題名・目次の部・表の見出し) と「一般用」(本文) の 2 種類に分ける。
+# フォントは「強調用」(見出し・題名・目次の章の行) と「一般用」(本文) の 2 種類に分ける。
 # 太字は使わない (強調はフォントの違いで表す)。色は使わず白黒にする (図を除く)。
 EMPH_LATIN = "Arial"
 EMPH_JA = "BIZ UDPゴシック"
@@ -97,7 +97,8 @@ def main():
     for name in ("Normal", "Body Text", "First Paragraph", "Compact", "Block Text", "Date", "Author"):
         if name in styles:
             set_fonts(styles[name], BODY_LATIN, BODY_JA, size=10.5)
-    for name, size in (("Title", 22), ("Subtitle", 13), ("Heading 1", 16), ("Heading 2", 13),
+    # 見出し 1 = 章、見出し 2 = 節、見出し 3 = 項
+    for name, size in (("Title", 22), ("Subtitle", 13), ("Heading 1", 20), ("Heading 2", 14),
                        ("Heading 3", 11.5), ("Heading 4", 10.5), ("TOC Heading", 16)):
         if name in styles:
             set_fonts(styles[name], EMPH_LATIN, EMPH_JA, size=size, bold=False)
@@ -105,15 +106,10 @@ def main():
     if "Source Code" in styles:
         set_fonts(styles["Source Code"], "Consolas", "BIZ UDゴシック", size=9)
 
-    # 部の題名 (md の ::: {custom-style="Part Title"})。章の見出しより大きく、目次では 1 段目になる
-    part = styles["Part Title"] if "Part Title" in styles else styles.add_style("Part Title", WD_STYLE_TYPE.PARAGRAPH)
-    part.base_style = styles["Normal"]
-    set_fonts(part, EMPH_LATIN, EMPH_JA, size=20, bold=False)
-    part.paragraph_format.space_before = Pt(0)
-    part.paragraph_format.space_after = Pt(18)
-    part.paragraph_format.keep_with_next = True
+    styles["Heading 1"].paragraph_format.space_before = Pt(0)     # 章は新しいページの先頭から始まる
+    styles["Heading 1"].paragraph_format.space_after = Pt(18)
 
-    # 目次: 1 段目 = 部 (強調用フォント)、2 段目 = 章 (一般用フォントで字下げ)。行間を詰めて、全体を 1〜2 ページで見渡せるようにする
+    # 目次: 1 段目 = 章 (強調用フォント)、2 段目 = 節 (一般用フォントで字下げ)。行間を詰めて、全体を 1〜2 ページで見渡せるようにする
     for name, indent, emph, before in (("toc 1", 0, True, 6), ("toc 2", 4, False, 0)):
         st = styles[name] if name in styles else styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
         st.base_style = styles["Normal"]
