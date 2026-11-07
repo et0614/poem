@@ -41,7 +41,7 @@ PoEM の目的は次のとおりである。
 | PoEM Server | MQTT ブローカーとして PoEM Pod からの電文を受け、BACnet の 1 台の Device として BMS に公開する |
 | BMS | BACnet/IP で PoEM Server を読み、監視・記録・警報を行う。PoEM の外にある |
 | PoEM Link | スマートフォンや PC に USB でつなぎ、子機を直接読み書きする |
-| PoEM Link 用アプリ | PoEM Link を使い、設置前の準備と動作確認を行う。PoEM Pod の機能の一部を簡易に補うもので、PoEM Pod に無い機能は持たない |
+| PoEM Link 用アプリ | PoEM Link を使い、設置前の準備、動作確認、短期の計測と記録を行う。この仕様書に定めた機能だけを使う |
 | PoEM Tap | Qwiic の配線を分岐・延長し、1 系統の I²C に複数の子機をつなぐ。プルアップ抵抗を持ち、入切できる |
 
 ### データの流れ
