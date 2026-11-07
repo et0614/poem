@@ -509,3 +509,6 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# 仕様書の Word 出力 (md から作り直す)
+docs/spec/build/

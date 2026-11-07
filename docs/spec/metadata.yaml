@@ -1,0 +1,9 @@
+# 仕様書の表紙と文書情報。版を上げたら version と date を書き換える。
+title: "PoEM システム仕様書"
+subtitle: "OSL 共通レジスタ v2・Pod・MQTT・PoEMServer・PoEM Link"
+author: "Eisuke Togashi"
+version: "0.1"
+status: "草案"
+date: "2026-11-07"
+lang: ja-JP
+toc-title: "目次"
