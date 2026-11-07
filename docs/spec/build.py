@@ -63,6 +63,7 @@ def main():
         "-o", str(out),
         "--reference-doc", str(REFERENCE),
         "--toc",
+        "--syntax-highlighting=none",               # コードの色分けをしない (資料は白黒、太字を使わない)
         "--number-sections",                         # {.unnumbered} の見出し (部・付録・前付け) は番号なし
         "--resource-path", f"{HERE}{';' if sys.platform == 'win32' else ':'}{HERE / 'figures'}",
     ]

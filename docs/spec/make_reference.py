@@ -16,7 +16,7 @@ from docx.enum.section import WD_ORIENT
 from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Mm, Pt, RGBColor
+from docx.shared import Mm, Pt
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build import find_pandoc  # noqa: E402
@@ -24,16 +24,15 @@ from build import find_pandoc  # noqa: E402
 HERE = Path(__file__).resolve().parent
 REFERENCE = HERE / "reference.docx"
 
-# 本文も見出しも BIZ UDP ゴシック (Windows 10 以降に標準で入っている UD フォント) で統一する。
-# 英数字も同じフォントにして、日本語と混ざったときの字形の不揃いをなくす。
-BODY_FONT = "BIZ UDPゴシック"
-HEAD_FONT = "BIZ UDPゴシック"
-LATIN_BODY = BODY_FONT
-LATIN_HEAD = HEAD_FONT
-ACCENT = RGBColor(0xA6, 0x3E, 0x00)     # 見出しの色 (PoEM のオレンジの濃い側)
+# フォントは「強調用」(見出し・題名・目次の部・表の見出し) と「一般用」(本文) の 2 種類に分ける。
+# 太字は使わない (強調はフォントの違いで表す)。色は使わず白黒にする (図を除く)。
+EMPH_LATIN = "Arial"
+EMPH_JA = "BIZ UDPゴシック"
+BODY_LATIN = "Times New Roman"
+BODY_JA = "BIZ UDP明朝 Medium"
 
 
-def set_fonts(style, latin, east_asia, size=None, bold=None, color=None):
+def set_fonts(style, latin, east_asia, size=None, bold=None):
     style.font.name = latin
     rpr = style.element.get_or_add_rPr()
     fonts = rpr.find(qn("w:rFonts"))
@@ -50,8 +49,6 @@ def set_fonts(style, latin, east_asia, size=None, bold=None, color=None):
         style.font.size = Pt(size)
     if bold is not None:
         style.font.bold = bold
-    if color is not None:
-        style.font.color.rgb = color
 
 
 def table_borders(style):
@@ -97,32 +94,30 @@ def main():
     doc = Document(str(REFERENCE))
     styles = doc.styles
 
-    for name in ("Normal", "Body Text", "First Paragraph", "Compact", "Block Text"):
+    for name in ("Normal", "Body Text", "First Paragraph", "Compact", "Block Text", "Date", "Author"):
         if name in styles:
-            set_fonts(styles[name], LATIN_BODY, BODY_FONT, size=10.5)
-    for name, size in (("Title", 22), ("Subtitle", 13), ("Heading 1", 16), ("Heading 2", 13), ("Heading 3", 11.5), ("Heading 4", 10.5)):
+            set_fonts(styles[name], BODY_LATIN, BODY_JA, size=10.5)
+    for name, size in (("Title", 22), ("Subtitle", 13), ("Heading 1", 16), ("Heading 2", 13),
+                       ("Heading 3", 11.5), ("Heading 4", 10.5), ("TOC Heading", 16)):
         if name in styles:
-            set_fonts(styles[name], LATIN_HEAD, HEAD_FONT, size=size, bold=True, color=ACCENT if name.startswith("Heading") else None)
-    for name in ("TOC Heading",):
-        if name in styles:
-            set_fonts(styles[name], LATIN_HEAD, HEAD_FONT, size=16, bold=True, color=ACCENT)
-            styles[name].paragraph_format.page_break_before = True     # 表紙と目次を別のページにする
+            set_fonts(styles[name], EMPH_LATIN, EMPH_JA, size=size, bold=False)
+    styles["TOC Heading"].paragraph_format.page_break_before = True     # 表紙と目次を別のページにする
     if "Source Code" in styles:
         set_fonts(styles["Source Code"], "Consolas", "BIZ UDゴシック", size=9)
 
     # 部の題名 (md の ::: {custom-style="Part Title"})。章の見出しより大きく、目次では 1 段目になる
     part = styles["Part Title"] if "Part Title" in styles else styles.add_style("Part Title", WD_STYLE_TYPE.PARAGRAPH)
     part.base_style = styles["Normal"]
-    set_fonts(part, LATIN_HEAD, HEAD_FONT, size=20, bold=True, color=ACCENT)
+    set_fonts(part, EMPH_LATIN, EMPH_JA, size=20, bold=False)
     part.paragraph_format.space_before = Pt(0)
     part.paragraph_format.space_after = Pt(18)
     part.paragraph_format.keep_with_next = True
 
-    # 目次: 1 段目 = 部 (太字)、2 段目 = 章 (字下げ)。行間を詰めて、全体を 1〜2 ページで見渡せるようにする
-    for name, indent, bold, before in (("toc 1", 0, True, 6), ("toc 2", 4, False, 0)):
+    # 目次: 1 段目 = 部 (強調用フォント)、2 段目 = 章 (一般用フォントで字下げ)。行間を詰めて、全体を 1〜2 ページで見渡せるようにする
+    for name, indent, emph, before in (("toc 1", 0, True, 6), ("toc 2", 4, False, 0)):
         st = styles[name] if name in styles else styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
         st.base_style = styles["Normal"]
-        set_fonts(st, LATIN_BODY, BODY_FONT, size=10.5, bold=bold)
+        set_fonts(st, EMPH_LATIN if emph else BODY_LATIN, EMPH_JA if emph else BODY_JA, size=10.5, bold=False)
         pf = st.paragraph_format
         pf.left_indent = Mm(indent * 2)
         pf.space_before = Pt(before)
@@ -139,12 +134,13 @@ def main():
         page_number_footer(section)
 
     doc.save(str(REFERENCE))
-    make_toc_styles_builtin()
+    finish_styles()
     print(f"作成しました: {REFERENCE}")
 
 
-def make_toc_styles_builtin():
+def finish_styles():
     """
+    保存した reference.docx の styles.xml を直接書き換える。
     python-docx で足したスタイルは「ユーザー定義」(customStyle) になり、Word が目次に使う組み込みの
     「目次 1」「目次 2」(styleId TOC1, TOC2) と別物として扱われる。styleId を組み込みのものに合わせ、
     ユーザー定義の印を外して、Word が目次を更新したときにこの書式を使うようにする。
@@ -160,6 +156,11 @@ def make_toc_styles_builtin():
                 for n in ("1", "2"):
                     xml = re.sub(rf'<w:style w:type="paragraph" w:customStyle="1" w:styleId="toc{n}">',
                                  f'<w:style w:type="paragraph" w:styleId="TOC{n}">', xml)
+                # 太字を使わない、色を使わない (白黒) という方針を、pandoc の既定のスタイル
+                # (見出しの色、リンクの青、表の見出し行の太字など) も含めて全体に当てる
+                xml = re.sub(r'<w:bCs?(?: w:val="[^"]*")? ?/>', '', xml)
+                xml = re.sub(r'<w:color [^>]*/>', '<w:color w:val="000000"/>', xml)
+                xml = re.sub(r'<w:u w:val="[^"]*" ?/>', '', xml)     # リンクの下線も外す
                 data = xml.encode("utf-8")
             zout.writestr(item, data)
     tmp.replace(REFERENCE)
