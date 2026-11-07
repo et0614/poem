@@ -60,7 +60,7 @@
 | PoEM Server | MQTT ブローカーを兼ね、PoEM Pod から受けた計測値を BACnet で公開するソフトウェア |
 | PoEM Link | スマートフォンや PC と子機を USB で中継する機器 |
 | PoEM Link 用アプリ | PoEM Link を使って子機を読み書きする、スマートフォン・PC 用のアプリ |
-| PoEM Tap | Qwiic の配線を分岐する基板 |
+| PoEM Tap | Qwiic の配線を分岐・延長する基板。プルアップ抵抗を持ち、入切できる |
 | BMS | 建物の中央監視・管理システム (Building Management System) |
 | Qwiic | JST SH 4 ピンのコネクタを使う I²C の配線の規格 |
 | UID | 子機の個体 ID。16 B の値で、子機の個体を区別する唯一の正式な識別子 |
