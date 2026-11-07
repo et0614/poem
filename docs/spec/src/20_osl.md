@@ -2,7 +2,9 @@
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 第2部 OSL 共通レジスタ (子機の仕様) {.unnumbered}
+::: {custom-style="Part Title"}
+第2部 OSL 共通レジスタ (子機の仕様)
+:::
 
 > この部は、PoEM 以外のメーカーが OSL 子機を作るときにも単独で読めるように書く。ほかの部を参照しないで済むようにする。
 >

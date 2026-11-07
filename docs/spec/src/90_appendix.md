@@ -2,7 +2,9 @@
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 付録 {.unnumbered}
+::: {custom-style="Part Title"}
+付録
+:::
 
 # 付録 A レジスタ一覧 {.unnumbered}
 

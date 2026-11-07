@@ -2,7 +2,9 @@
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 第7部 運用 {.unnumbered}
+::: {custom-style="Part Title"}
+第7部 運用
+:::
 
 # 設置と立ち上げ
 

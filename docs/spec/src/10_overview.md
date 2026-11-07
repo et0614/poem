@@ -2,7 +2,9 @@
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 第1部 総論 {.unnumbered}
+::: {custom-style="Part Title"}
+第1部 総論
+:::
 
 # 目的と適用範囲
 

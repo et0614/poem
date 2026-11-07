@@ -2,7 +2,9 @@
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 第6部 PoEM Link と補助ソフト {.unnumbered}
+::: {custom-style="Part Title"}
+第6部 PoEM Link と補助ソフト
+:::
 
 > 元資料: Drive の PoEM_Link_通信仕様.md、PoEM_Linkアプリ_方針.md、hardware/poem_link、firmware/poem_link.X、software/src/PoEMLink.*。
 

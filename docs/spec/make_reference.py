@@ -13,6 +13,7 @@ from pathlib import Path
 
 from docx import Document
 from docx.enum.section import WD_ORIENT
+from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Mm, Pt, RGBColor
@@ -23,10 +24,12 @@ from build import find_pandoc  # noqa: E402
 HERE = Path(__file__).resolve().parent
 REFERENCE = HERE / "reference.docx"
 
-BODY_FONT = "游明朝"
-HEAD_FONT = "游ゴシック"
-LATIN_BODY = "Century"
-LATIN_HEAD = "Arial"
+# 本文も見出しも BIZ UDP ゴシック (Windows 10 以降に標準で入っている UD フォント) で統一する。
+# 英数字も同じフォントにして、日本語と混ざったときの字形の不揃いをなくす。
+BODY_FONT = "BIZ UDPゴシック"
+HEAD_FONT = "BIZ UDPゴシック"
+LATIN_BODY = BODY_FONT
+LATIN_HEAD = HEAD_FONT
 ACCENT = RGBColor(0xA6, 0x3E, 0x00)     # 見出しの色 (PoEM のオレンジの濃い側)
 
 
@@ -105,7 +108,26 @@ def main():
             set_fonts(styles[name], LATIN_HEAD, HEAD_FONT, size=16, bold=True, color=ACCENT)
             styles[name].paragraph_format.page_break_before = True     # 表紙と目次を別のページにする
     if "Source Code" in styles:
-        set_fonts(styles["Source Code"], "Consolas", "ＭＳ ゴシック", size=9)
+        set_fonts(styles["Source Code"], "Consolas", "BIZ UDゴシック", size=9)
+
+    # 部の題名 (md の ::: {custom-style="Part Title"})。章の見出しより大きく、目次では 1 段目になる
+    part = styles["Part Title"] if "Part Title" in styles else styles.add_style("Part Title", WD_STYLE_TYPE.PARAGRAPH)
+    part.base_style = styles["Normal"]
+    set_fonts(part, LATIN_HEAD, HEAD_FONT, size=20, bold=True, color=ACCENT)
+    part.paragraph_format.space_before = Pt(0)
+    part.paragraph_format.space_after = Pt(18)
+    part.paragraph_format.keep_with_next = True
+
+    # 目次: 1 段目 = 部 (太字)、2 段目 = 章 (字下げ)。行間を詰めて、全体を 1〜2 ページで見渡せるようにする
+    for name, indent, bold, before in (("toc 1", 0, True, 6), ("toc 2", 4, False, 0)):
+        st = styles[name] if name in styles else styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
+        st.base_style = styles["Normal"]
+        set_fonts(st, LATIN_BODY, BODY_FONT, size=10.5, bold=bold)
+        pf = st.paragraph_format
+        pf.left_indent = Mm(indent * 2)
+        pf.space_before = Pt(before)
+        pf.space_after = Pt(0)
+        pf.line_spacing = 1.0
     if "Table" in styles:
         table_borders(styles["Table"])
 
@@ -117,7 +139,30 @@ def main():
         page_number_footer(section)
 
     doc.save(str(REFERENCE))
+    make_toc_styles_builtin()
     print(f"作成しました: {REFERENCE}")
+
+
+def make_toc_styles_builtin():
+    """
+    python-docx で足したスタイルは「ユーザー定義」(customStyle) になり、Word が目次に使う組み込みの
+    「目次 1」「目次 2」(styleId TOC1, TOC2) と別物として扱われる。styleId を組み込みのものに合わせ、
+    ユーザー定義の印を外して、Word が目次を更新したときにこの書式を使うようにする。
+    """
+    import re
+    import zipfile
+    tmp = REFERENCE.with_suffix(".tmp")
+    with zipfile.ZipFile(REFERENCE) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "word/styles.xml":
+                xml = data.decode("utf-8")
+                for n in ("1", "2"):
+                    xml = re.sub(rf'<w:style w:type="paragraph" w:customStyle="1" w:styleId="toc{n}">',
+                                 f'<w:style w:type="paragraph" w:styleId="TOC{n}">', xml)
+                data = xml.encode("utf-8")
+            zout.writestr(item, data)
+    tmp.replace(REFERENCE)
 
 
 if __name__ == "__main__":

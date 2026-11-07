@@ -2,7 +2,9 @@
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 第3部 Pod (親機) {.unnumbered}
+::: {custom-style="Part Title"}
+第3部 Pod (親機)
+:::
 
 > 元資料: firmware/poem_pod.X (main.c、node_manager.c、i2c_master.c)、メモリの「親機電源構成」。
 

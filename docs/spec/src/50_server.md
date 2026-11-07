@@ -2,7 +2,9 @@
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 第5部 PoEMServer と BACnet への公開 {.unnumbered}
+::: {custom-style="Part Title"}
+第5部 PoEMServer と BACnet への公開
+:::
 
 > 元資料: software/src/PoEMServer (Program.cs、BACnet/PoEMDevice.cs、BACnet/PodRegistry.cs、setting.ini)、software/src/PoEM.Common。
 

@@ -2,7 +2,9 @@
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 第4部 MQTT の電文 {.unnumbered}
+::: {custom-style="Part Title"}
+第4部 MQTT の電文
+:::
 
 > 元資料: OSL共通レジスタv2_アドレス表.md §12、firmware/poem_pod.X/main.c・node_manager.c、software/src/PoEMServer/NodePayloads.cs。
 
