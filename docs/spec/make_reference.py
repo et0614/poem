@@ -102,6 +102,7 @@ def main():
                        ("Heading 3", 11.5), ("Heading 4", 10.5), ("TOC Heading", 16)):
         if name in styles:
             set_fonts(styles[name], EMPH_LATIN, EMPH_JA, size=size, bold=False)
+            styles[name].font.italic = False    # 斜体も使わない (強調は書体の違いだけで表す)
     styles["TOC Heading"].paragraph_format.page_break_before = True     # 表紙と目次を別のページにする
     if "Source Code" in styles:
         set_fonts(styles["Source Code"], "Consolas", "BIZ UDゴシック", size=9)

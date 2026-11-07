@@ -49,9 +49,17 @@ def main():
     if not REFERENCE.exists():
         sys.exit("reference.docx がありません。先に python docs/spec/make_reference.py を実行してください。")
 
-    sources = sorted(SRC.glob("*.md"))
     OUT.mkdir(exist_ok=True)
     out = OUT / f"PoEM_仕様書_{version()}.docx"
+
+    # 表の列幅を中身の文字量に合わせてから pandoc に渡す (原稿の md は書き換えない)
+    work = OUT / "_src"
+    work.mkdir(exist_ok=True)
+    sources = []
+    for src in sorted(SRC.glob("*.md")):
+        dst = work / src.name
+        dst.write_text(set_table_widths(src.read_text(encoding="utf-8")), encoding="utf-8")
+        sources.append(dst)
 
     meta = read_metadata()
     cmd = [
@@ -69,6 +77,62 @@ def main():
     ]
     subprocess.run(cmd, check=True)
     print(f"作成しました: {out}")
+
+
+def _display_width(text: str) -> int:
+    """表示上の幅 (全角 2、半角 1)"""
+    import unicodedata
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
+
+
+def set_table_widths(md: str) -> str:
+    """
+    パイプ表の区切り行 (|---|---|) の「-」の数を、列ごとの文字量に比例させる。
+    pandoc は、行が長い表では区切り行の「-」の数の比で列幅を決める。原稿で
+    すべて |---| と書いても、中身の多い列が広くなるようにする。
+    """
+    lines = md.split("\n")
+    out = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        is_table = (line.lstrip().startswith("|") and i + 1 < len(lines)
+                    and lines[i + 1].replace("|", "").replace("-", "").replace(":", "").strip() == ""
+                    and "-" in lines[i + 1])
+        if not is_table:
+            out.append(line)
+            i += 1
+            continue
+        rows = [line]
+        j = i + 2
+        while j < len(lines) and lines[j].lstrip().startswith("|"):
+            rows.append(lines[j])
+            j += 1
+        cells = [[c.strip() for c in r.strip().strip("|").split("|")] for r in rows]
+        ncol = len(cells[0])
+        # 列幅 = max(途中で切れない語の最長 + 2, 文字量の半分)。番地のような短い値は折り返さず、
+        # 文章の列は広くなりすぎないようにする
+        import re
+        widths = [4] * ncol
+        for n, r in enumerate(cells):
+            for k, c in enumerate(r[:ncol]):
+                w = _display_width(c)
+                token = max((_display_width(t) for t in re.findall(r"[\x21-\x7e〜×°²]+", c)), default=0)
+                widths[k] = max(widths[k], token + 2, min(w, 60) // 2)
+                if n == 0 or w <= 12:
+                    widths[k] = max(widths[k], w + 2)     # 見出しの行と短い値は折り返さない
+        aligns = [c.strip() for c in lines[i + 1].strip().strip("|").split("|")]
+        sep = []
+        for k in range(ncol):
+            a = aligns[k] if k < len(aligns) else "---"
+            left, right = a.startswith(":"), a.endswith(":")
+            n = widths[k] - left - right
+            sep.append((":" if left else "") + "-" * max(n, 3) + (":" if right else ""))
+        out.append(line)
+        out.append("|" + "|".join(sep) + "|")
+        out.extend(rows[1:])
+        i = j
+    return "\n".join(out)
 
 
 if __name__ == "__main__":
