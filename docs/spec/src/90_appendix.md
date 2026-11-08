@@ -106,30 +106,34 @@ model_id の上位バイトは計測の分類、下位バイトは通し番号�
 
 # 付録 C BACnet オブジェクト一覧の例 {.unnumbered}
 
-PoEM Server (Device 番号 25) に、PoEM Pod が 2 台つながる例を示す。PoEM Pod 0 番 (名前「3F 東」) には温湿度センサ (アドレス 16、名前「第2会議室」) が、PoEM Pod 1 番には差圧センサ (アドレス 18、名前「AHU-1 フィルタ」) がつながる。
+PoEM Server (Device 番号 25) に、PoEM Pod が 2 台つながる例を示す。PoEM Pod 0 番 (名前「3F 東」) には温湿度センサ (アドレス 16、名前「第2会議室」) が、PoEM Pod 1 番には差圧センサ (アドレス 18、名前「AHU-1 フィルタ」) がつながる。番号は、オブジェクトの種類ごとに 0 から詰めて振られる (5.3 節)。
 
-| 番号 | 種類 | Object_Name | 内容 |
+| 種類 | 番号 | Object_Name | 内容 |
 |---|---|---|---|
-| 0 | CharacterString Value | P00_POD_NAME | 3F 東 |
-| 1 | CharacterString Value | P00_POD_ID | 0008DC030133 |
-| 2 | CharacterString Value | P00_POD_FW | 2.0.0 |
-| 3 | CharacterString Value | P00_POD_IP | 192.168.1.25 |
-| 1600 | DateTime Value | P00_A016_第2会議室_DT | 最後に受け取った日時 |
-| 1601 | CharacterString Value | P00_A016_第2会議室_ID | 表示用 ID |
-| 1602 | CharacterString Value | P00_A016_第2会議室_NAME | 第2会議室 |
-| 1603 | Analog Input | P00_A016_第2会議室_FAULT | 状態のビット |
-| 1604 | Analog Input | P00_A016_第2会議室_SEQ | sample_seq |
-| 1605 | Analog Input | P00_A016_第2会議室_CNT | 2 |
-| 1606 | DateTime Value | P00_A016_第2会議室_NDT | 最後に正常だった日時 |
-| 1607 | CharacterString Value | P00_A016_第2会議室_MODEL | 温湿度センサ (SHT4x) 0x0101 |
-| 1608 | CharacterString Value | P00_A016_第2会議室_FW | 2.0.0 |
-| 1609 | Analog Input | P00_A016_第2会議室_UPTIME | 稼働時間 [s] |
-| 1610 | Analog Input | P00_A016_第2会議室_Temp | 温度 [°C] |
-| 1611 | Analog Input | P00_A016_第2会議室_RH | 相対湿度 [%RH] |
-| 12000〜12003 | CharacterString Value | P01_POD_NAME など | PoEM Pod 1 番の情報 |
-| 13800〜13809 | (上と同じ形) | P01_A018_AHU-1 フィルタ_DT など | 差圧センサの情報 |
-| 13810 | Analog Input | P01_A018_AHU-1 フィルタ_DP | 差圧 [Pa] |
-| 13811 | Analog Input | P01_A018_AHU-1 フィルタ_Temp | センサの温度 [°C] |
+| Analog Input | 0 | P00_A016_第2会議室_Temp | 温度 [°C] |
+| Analog Input | 1 | P00_A016_第2会議室_RH | 相対湿度 [%RH] |
+| Analog Input | 2 | P00_A016_第2会議室_FAULT | 状態のビット |
+| Analog Input | 3 | P00_A016_第2会議室_SEQ | sample_seq |
+| Analog Input | 4 | P00_A016_第2会議室_CNT | 2 |
+| Analog Input | 5 | P00_A016_第2会議室_UPTIME | 稼働時間 [s] |
+| Analog Input | 6 | P01_A018_AHU-1 フィルタ_DP | 差圧 [Pa] |
+| Analog Input | 7 | P01_A018_AHU-1 フィルタ_Temp | センサの温度 [°C] |
+| Analog Input | 8〜11 | P01_A018_AHU-1 フィルタ_FAULT など | 差圧センサの状態など |
+| CharacterString Value | 0 | P00_POD_NAME | 3F 東 |
+| CharacterString Value | 1 | P00_POD_ID | 0008DC030133 |
+| CharacterString Value | 2 | P00_POD_FW | 2.0.0 |
+| CharacterString Value | 3 | P00_POD_IP | 192.168.1.25 |
+| CharacterString Value | 4 | P00_A016_第2会議室_ID | 表示用 ID |
+| CharacterString Value | 5 | P00_A016_第2会議室_NAME | 第2会議室 |
+| CharacterString Value | 6 | P00_A016_第2会議室_MODEL | 温湿度センサ (SHT4x) 0x0101 |
+| CharacterString Value | 7 | P00_A016_第2会議室_FW | 2.0.0 |
+| CharacterString Value | 8〜11 | P01_POD_NAME など | PoEM Pod 1 番の情報 |
+| CharacterString Value | 12〜15 | P01_A018_AHU-1 フィルタ_ID など | 差圧センサの情報 |
+| DateTime Value | 0 | P00_A016_第2会議室_DT | 最後に受け取った日時 |
+| DateTime Value | 1 | P00_A016_第2会議室_NDT | 最後に正常だった日時 |
+| DateTime Value | 2、3 | P01_A018_AHU-1 フィルタ_DT、NDT | 差圧センサの日時 |
+
+この例は、PoEM Pod 0 番を先に受け取った場合である。番号は PoEM Server が受け取った順に振るので、順序が違えば番号の並びも変わる。一度振った番号は、ObjectMap.json に保存されて変わらない。
 
 # 付録 D 電文の例 {.unnumbered}
 
@@ -161,16 +165,16 @@ PoEM Server (Device 番号 25) に、PoEM Pod が 2 台つながる例を示す�
 | 新しい子機をつなぐ | 10 秒以内に増分の走査で見つけ、config を送る | オブジェクトを作る |
 | 子機を抜く | 状態 12 の data を毎秒送る。再プローブを続ける | Reliability 12、値は据え置き |
 | 同じ子機を挿し直す | 再プローブで同じ UID を確かめ、POLL を再開する。config は送らない | 正常に戻る |
-| 同じアドレスに別の個体 (同じ機種) を挿す | 再プローブで UID の変化を検知し、config を送ってから data を送る | オブジェクトを作り直す。番号は変わらない |
-| 同じアドレスに別の機種を挿す | 同上 | 同上 (チャネルの構成が変わる) |
+| 同じアドレスに別の個体 (同じ機種) を挿す | 再プローブで UID の変化を検知し、config を送ってから data を送る | オブジェクトを作り直す。番号は対応表のまま変わらない |
+| 同じアドレスに別の機種を挿す | 同上 | 同上。チャネルが増えた分は新しい番号を振る |
 | 同じアドレスに OSL 以外の機器を挿す | OSL の子機ではないと記録し、書き込まない | 状態 12 のまま |
 | 子機のアドレスを変える (PoEM Pod の設定のモード) | 再起動の後の全体の走査で、新しいアドレスで見つける | 同じ UID の移動として、古いアドレスのオブジェクトを消し、新しいアドレスに作る |
 | 子機を別の PoEM Pod に移す | 移した先の PoEM Pod が見つける | 移した先にオブジェクトを作る。古いオブジェクトは状態 12 のまま残る |
-| PoEM Pod の停止、LAN の切断 | — | 値は据え置かれ、1 時間後に状態 12 になる |
+| PoEM Pod の停止、LAN の切断 | — | 値は据え置かれ、1 時間後に状態 12 になる。DT の日時が止まる |
 | PoEM Server の再起動 | 再接続の後の全体の走査で config を送り直す | オブジェクトを作り直す |
 | config が失われる | 10 分ごとの送り直しで、最長 10 分で回復する | 回復まで data を無視する (交換の後なら、前の子機の情報で値を記録する) |
 | 途中から接続した MQTT クライアント | — | 10 分以内にすべての子機の config を受け取る |
-| 子機の名前を変える | 次の config で新しい名前を送る | base + 2 の値が変わる。Object_Name は変わらない |
+| 子機の名前を変える | 次の config で新しい名前を送る | NAME の値が変わる。Object_Name は変わらない |
 | 子機の再起動 | uptime_s の巻き戻りを検知し、識別区画を確かめる。node/diag を送る | 稼働時間が 0 からになる |
 
 この表は、この文書で定めた動きを示す。現在の実装との差は、付録 F の「実装の状況」に示す。
@@ -201,6 +205,7 @@ PoEM Server (Device 番号 25) に、PoEM Pod が 2 台つながる例を示す�
 | 7 | 拡張識別の CRC が合わないときの読み直し (いまは 1 回で「機能なし」とする) | PoEM Pod のファームウェア | 2.9.1 |
 | 8 | 名前の書き込みの後の読み返しによる確認 | PoEM Pod のファームウェア | 2.9.3 |
 | 9 | I²C アドレスの変更の後の、新しいアドレスでの device_id の確認 | PoEM Pod のファームウェア | 2.9.3 |
+| 10 | オブジェクトの番号を種類ごとに 0 から詰めて振り、ObjectMap.json で固定する (いまは PoEM Pod の番号 × 12000 + I²C アドレス × 100 + 項目) | PoEM Server | 5.3 |
 
 ## F.3 決定済みの事項 {.unnumbered}
 
@@ -208,7 +213,7 @@ PoEM Server (Device 番号 25) に、PoEM Pod が 2 台つながる例を示す�
 
 | 項目 | 決定 | 理由 |
 |---|---|---|
-| オブジェクトの番号を種類ごとに 0 から振り直す案 | 採らない | 一般の BMS は番号だけで点を区別するので、1 台の Device の中で番号を重ねない (1.3 節の原則 3) |
+| オブジェクトの番号 | 種類ごとに 0 から欠番なく詰めて振り、対応表 (ObjectMap.json) で固定する。鍵は場所 (PoEM Pod の番号、I²C アドレス、項目) | インスタンス番号の振り方は BACnet Device の側の責任であり、一般の現場では種類ごとに 0 から詰めて振る。欠番の多い振り方は見にくい (共同開発者の現場の BMS の慣習による) |
 | BACnet の Device | PoEM Server 1 台につき 1 台、ポート 47808 | 建築一般の現場の慣習 (Device 番号は IP アドレスの末尾、ポートは標準) に合わせる |
 | 個体の識別子 | UID (16 B) を正式とし、表示用 ID は補助とする | 22 ビットでは重なりうる |
 | プルアップの置き場所 | 子機には持たせず、上位機器と PoEM Tap に置き、配線に合わせて入切する | 子機ごとに持たせると、台数に比例して強くなりすぎる |

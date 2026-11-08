@@ -45,19 +45,20 @@
 1. setting.ini に、MQTT と BACnet の IP アドレス、Device 番号を書く (5.1.3 項)。
 2. PoEM Server を起動する。PoEM Pod が接続すると、子機のオブジェクトが作られる。
 3. PoEM Pod の番号が計画どおりでなければ、PodMap.json を書き換えて再起動する。
+4. BMS に登録する前であれば、ObjectMap.json を消して PoEM Server を再起動すると、オブジェクトの番号を、PoEM Pod の番号の順・子機のアドレスの順に振り直せる。BMS に登録した後は、ObjectMap.json を消してはならない。
 
 ### BMS への登録
 
 1. BMS から Who-Is を送り、PoEM Server の Device を見つける。
 2. オブジェクトの一覧を読み、点の表と照らし合わせる。オブジェクトの番号の規則は 5.3 節、名前の規則は 5.4 節に示す。
-3. BMS には、チャネルの値のオブジェクト (base + 10 以降) を点として登録する。必要に応じて、状態のビット (base + 3) と、最後に受け取った日時 (base + 0) も登録する。
+3. BMS には、チャネルの値のオブジェクト (Analog Input の CH0 など) を点として登録する。必要に応じて、状態のビット (FAULT) と、最後に受け取った日時 (DT) も登録する。オブジェクトの番号と項目の対応は、ObjectMap.json でも確かめられる。
 4. 点の値の異常は、Reliability と STATUS_FLAGS の FAULT で判断する。
 
 ## 保守
 
 ### 子機の交換
 
-- 同じ機種の子機に交換する場合は、新しい子機に、古い子機と同じ I²C アドレスと名前を設定してから、同じ PoEM Pod の同じ系統につなぐ。BACnet のオブジェクトの番号は変わらない。
+- 同じ機種の子機に交換する場合は、新しい子機に、古い子機と同じ I²C アドレスと名前を設定してから、同じ PoEM Pod の同じ系統につなぐ。BACnet のオブジェクトの番号は、対応表 (ObjectMap.json) により変わらない。
 - PoEM Pod は、交換を検知して新しい子機の config を送る (3.3.3 項)。PoEM Server は、UID の変化を受けて子機のオブジェクトを作り直す。
 - 校正の係数は子機についているので、交換した子機の校正の状態を確かめなければならない。
 
@@ -69,7 +70,7 @@
 
 ### PoEM Pod の交換・移設
 
-- PoEM Pod を交換すると、PoEM Pod の ID (MAC アドレス) が変わるので、PoEM Server は新しい番号を振る。BMS の点の番号を保つには、PodMap.json で、新しい PoEM Pod に古い PoEM Pod の番号を割り当て直し、PoEM Server を再起動する。
+- PoEM Pod を交換すると、PoEM Pod の ID (MAC アドレス) が変わるので、PoEM Server は新しい PoEM Pod の番号を振り、オブジェクトにも新しい番号を振る。BMS の点の番号を保つには、PodMap.json で、新しい PoEM Pod に古い PoEM Pod の番号を割り当て直し、PoEM Server を再起動する (ObjectMap.json の対応がそのまま使われる)。
 - PoEM Pod を別の PoEM Server に移すと、移した先で番号が振られる。古い PoEM Server には、古いオブジェクトが残る。
 
 ### 子機の撤去
@@ -83,7 +84,7 @@
 | 子機 | UPDI の書き込み器で書き込む | ユーザー領域の形が変わる更新では、アドレス・名前・係数が既定値に戻る (2.5.3 項)。更新の前に控えておく |
 | PoEM Pod | UPDI の書き込み器で書き込む | 設定が保たれることを更新の後に確かめる |
 | PoEM Link | UPDI の書き込み器で書き込む | — |
-| PoEM Server | 実行ファイルを置き換える | setting.ini と PodMap.json は残す |
+| PoEM Server | 実行ファイルを置き換える | setting.ini、PodMap.json、ObjectMap.json は残す |
 
 ## 異常時の切り分け
 
@@ -96,6 +97,6 @@
 | 状態が 12 が多くの子機で起きる | I²C のバスの不調 (配線が長い、子機が多い) | pod/diag の失敗の回数、延長ケーブルの長さ、プルアップ |
 | 状態が 64 (準備中) のまま | 予熱の途中、センサの初期化の失敗 | 起動からの時間 (warmup_ms)、子機の再起動 |
 | 状態が 1 (センサ応答なし) | センサの故障・外れ | 子機の交換 |
-| 値が変わらない | PoEM Pod の停止、LAN の切断 | base + 0 (最後に受け取った日時) が進んでいるか |
+| 値が変わらない | PoEM Pod の停止、LAN の切断 | DT (最後に受け取った日時) が進んでいるか |
 | 値が別の子機のものに見える | 交換の後の config の喪失 | PoEM Pod の SCAN ボタン |
 | BMS に PoEM Server が見えない | IP アドレス・ポート・Device 番号の重なり | setting.ini、ほかの PoEM Server の Device 番号 |

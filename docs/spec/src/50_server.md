@@ -45,18 +45,28 @@ PoEM Server を動かす計算機は、PoEM Pod の側のネットワークと�
 
 ## オブジェクトの番号の規則
 
-### 番号の範囲
+### 番号の振り方
 
-オブジェクトの番号 (Instance) は、PoEM Pod の番号と、子機の I²C アドレスと、項目から決める。
+オブジェクトは、BACnet の規格どおり、オブジェクトの種類 (Analog Input、CharacterString Value、DateTime Value) と番号 (Instance) の組で区別する。
 
-| 範囲 | 決め方 | 内容 |
-|---|---|---|
-| PoEM Pod の範囲 | pbase = PoEM Pod の番号 × 12000 | PoEM Pod 1 台に 12000 個の番号を使う |
-| PoEM Pod の情報 | pbase + 0〜3 | 下表 |
-| 子機の範囲 | base = pbase + I²C アドレス × 100 | 子機 1 台に 100 個の番号を使う。I²C アドレス 0x08〜0x77 (8〜119) に対し pbase + 800〜11999 |
+- PoEM Server は、オブジェクトの番号を、種類ごとに 0 から、欠番を設けずに詰めて振らなければならない。種類が違えば、同じ番号を使ってよい。
+- 番号は、オブジェクトを初めて作るときに、その種類で使われている最も大きい番号の次の番号とする。
+- PoEM Server は、振った番号を対応表 (ObjectMap.json、実行ファイルと同じフォルダ) に保存し、再起動しても同じ番号を使わなければならない。一度振った番号を変えてはならない。
+- 対応表の鍵は、場所と項目 (PoEM Pod の番号、子機の I²C アドレス、項目) とする。同じ場所の子機を交換しても、番号は変わらない。
+- 対応表にある番号は、そのオブジェクトが無くなっても、ほかのオブジェクトに使ってはならない。
 
-- 番号の上限 (4194302) から、1 台の PoEM Server が扱える PoEM Pod は 349 台までとする。
-- 1 台の Device の中では、オブジェクトの種類が違っても、同じ番号を使ってはならない (1.3 節の原則 3)。
+解説: インスタンス番号の振り方は、BACnet Device の側 (機器を納める側) が決める事項であり、建物の場所の体系に合わせる必要はない。一般の現場では、オブジェクトの種類ごとに 0 から詰めて番号を振ることが多い。欠番の多い振り方は、BMS の点の一覧でかえって見にくい。一方で、番号を詰め直すと BMS の登録が崩れるので、一度振った番号は対応表で固定する。撤去した子機の番号は欠番として残る。
+
+### 振る順序
+
+番号は、オブジェクトを作る順に振る。PoEM Server は、次の順にオブジェクトを作らなければならない。
+
+1. PoEM Pod を初めて受け取ったとき: その PoEM Pod の情報のオブジェクト (5.3.4 項)
+2. 子機を初めて受け取ったとき (config): その子機のオブジェクト (5.3.5 項)。種類ごとに、5.3.5 項の表の順に振る
+
+PoEM Pod は、全体の走査で子機をアドレスの順に見つけて config を送るので、初めて立ち上げたときの番号は、PoEM Pod の番号の順、子機のアドレスの順に並ぶ。
+
+- 交換した子機のチャネル数が、前の子機より多い場合は、増えたチャネルにだけ新しい番号を振る (その種類の最後に足す)。少ない場合は、使わなくなった番号を欠番として残す。
 
 ### PoEM Pod の番号
 
@@ -64,35 +74,34 @@ PoEM Server を動かす計算機は、PoEM Pod の側のネットワークと�
 - 再起動しても、同じ PoEM Pod には同じ番号を振らなければならない。
 - 利用者は、PodMap.json を書き換えて PoEM Server を再起動することで、PoEM Pod の番号を変えてよい。
 
-解説: PoEM Pod の番号は、PoEM Server ごとに独立している。別の PoEM Server につなぎ替えた PoEM Pod は、つなぎ替えた先で別の番号になることがある。PoEM Server ごとに Device が違うので、別の PoEM Server の間でオブジェクトの番号が重なっても問題はない。
+解説: PoEM Pod の番号は、オブジェクトの名前 (5.4 節) と対応表の鍵に使う。PoEM Pod を交換したときは、PodMap.json で新しい PoEM Pod に古い番号を割り当て直すと、オブジェクトの番号と名前を引き継げる。PoEM Pod の番号は PoEM Server ごとに独立している。
 
 ### PoEM Pod の情報のオブジェクト
 
-| 番号 | 種類 | 内容 |
-|---|---|---|
-| pbase + 0 | CharacterString Value | PoEM Pod の名前 (空なら PoEM Pod の ID) |
-| pbase + 1 | CharacterString Value | PoEM Pod の ID (MAC アドレス、16 進 12 桁) |
-| pbase + 2 | CharacterString Value | PoEM Pod のファームウェアの版 |
-| pbase + 3 | CharacterString Value | PoEM Pod の IP アドレス |
+| 順 | 種類 | 項目 | 内容 |
+|---|---|---|---|
+| 1 | CharacterString Value | POD_NAME | PoEM Pod の名前 (空なら PoEM Pod の ID) |
+| 2 | CharacterString Value | POD_ID | PoEM Pod の ID (MAC アドレス、16 進 12 桁) |
+| 3 | CharacterString Value | POD_FW | PoEM Pod のファームウェアの版 |
+| 4 | CharacterString Value | POD_IP | PoEM Pod の IP アドレス |
 
 ### 子機のオブジェクト
 
-| 番号 | 種類 | 内容 |
-|---|---|---|
-| base + 0 | DateTime Value | 最後に data を受け取った日時 |
-| base + 1 | CharacterString Value | 子機の表示用 ID (5.5 節)。Description に UID を書く |
-| base + 2 | CharacterString Value | 子機の名前 |
-| base + 3 | Analog Input | 状態が正常でないチャネルのビット (bit i がチャネル i) |
-| base + 4 | Analog Input | sample_seq |
-| base + 5 | Analog Input | チャネル数 |
-| base + 6 | DateTime Value | 最後にすべてのチャネルが正常だった日時 |
-| base + 7 | CharacterString Value | 機種 (機種名と model_id) |
-| base + 8 | CharacterString Value | 子機のファームウェアの版 |
-| base + 9 | Analog Input | 子機の稼働時間 [s] |
-| base + 10〜25 | Analog Input | チャネル 0〜15 の値。単位はチャネルの単位 |
-| base + 26〜99 | — | 予約 |
+| 順 | 種類 | 項目 | 内容 |
+|---|---|---|---|
+| 1 | Analog Input | CH0〜CH(N−1) | チャネル 0〜N−1 の値。単位はチャネルの単位 |
+| 2 | Analog Input | FAULT | 状態が正常でないチャネルのビット (bit i がチャネル i) |
+| 3 | Analog Input | SEQ | sample_seq |
+| 4 | Analog Input | CNT | チャネル数 |
+| 5 | Analog Input | UPTIME | 子機の稼働時間 [s] |
+| 1 | CharacterString Value | ID | 子機の表示用 ID (5.5 節)。Description に UID を書く |
+| 2 | CharacterString Value | NAME | 子機の名前 |
+| 3 | CharacterString Value | MODEL | 機種 (機種名と model_id) |
+| 4 | CharacterString Value | FW | 子機のファームウェアの版 |
+| 1 | DateTime Value | DT | 最後に data を受け取った日時 |
+| 2 | DateTime Value | NDT | 最後にすべてのチャネルが正常だった日時 |
 
-解説: 項目ごとにオブジェクトの種類が決まっているので、子機の範囲の中で番号は重ならない。チャネルの値の番号は base + 10 + チャネル番号であり、同じ機種の子機に交換しても変わらない。
+解説: チャネルの値を各子機の Analog Input の先頭に置くので、BMS に登録する主な点 (チャネルの値) が、子機ごとに続いた番号になる。
 
 ## オブジェクトの名前の規則
 
@@ -108,7 +117,7 @@ P{PoEM Pod の番号 2 桁}\_A{I²C アドレス 10 進 3 桁}\_{子機の名前
 |---|---|
 | P01_A016 | PoEM Pod の番号と I²C アドレス |
 | 子機の名前 | 子機に設定した名前。空なら「Node_」と表示用 ID |
-| 項目 | チャネル名 (Temp など) または項目名 (DT、ID、NAME、FAULT、SEQ、CNT、NDT、MODEL、FW、UPTIME) |
+| 項目 | チャネル名 (Temp など) または項目名 (DT、ID、NAME、FAULT、SEQ、CNT、NDT、MODEL、FW、UPTIME。5.3.5 項) |
 
 PoEM Pod の情報のオブジェクトは、P{番号}_POD_NAME、P{番号}_POD_ID、P{番号}_POD_FW、P{番号}_POD_IP とする。
 
@@ -122,7 +131,7 @@ PoEM Pod の情報のオブジェクトは、P{番号}_POD_NAME、P{番号}_POD_
 - TSC コードを Object_Name に含めるかどうかと、その形
 - 表示用 ID を Object_Name に含めるかどうか
 - Object_Name の長さの上限と、日本語を扱えない BMS への対応
-- 子機の名前を変えたときに Object_Name を変えるかどうか (現在は、名前を変えても Object_Name は変わらず、base + 2 の値だけが変わる)
+- 子機の名前を変えたときに Object_Name を変えるかどうか (現在は、名前を変えても Object_Name は変わらず、NAME の値だけが変わる)
 
 ## 表示用 ID
 
@@ -146,7 +155,7 @@ PoEM Pod の情報のオブジェクトは、P{番号}_POD_NAME、P{番号}_POD_
 - st が 0 でない間は、STATUS_FLAGS の FAULT を立て、Present_Value を更新してはならない (最後の正常値のまま据え置く)。
 - st が 0 に戻ったら、FAULT を下ろし、Present_Value の更新を再開する。
 - data に値が無い (子機を読めなかった) 場合は、Present_Value を更新しない。
-- base + 0 (最後に data を受け取った日時) は data を受け取るたびに、base + 6 (最後にすべてのチャネルが正常だった日時) はすべての st が 0 のときに更新する。
+- DT (最後に data を受け取った日時) は data を受け取るたびに、NDT (最後にすべてのチャネルが正常だった日時) はすべての st が 0 のときに更新する。
 
 ### 受信の途絶
 
@@ -160,9 +169,9 @@ PoEM Pod の情報のオブジェクトは、P{番号}_POD_NAME、P{番号}_POD_
 | 変化 | PoEM Server の動き |
 |---|---|
 | 子機を初めて受け取った (config) | 子機のオブジェクトを作る |
-| 同じアドレスで UID が変わった (交換) | 子機のオブジェクトを作り直す (番号は変わらない) |
+| 同じアドレスで UID が変わった (交換) | 子機のオブジェクトを作り直す (番号は対応表のまま変わらない) |
 | 同じアドレスでチャネルの構成が変わった | 子機のオブジェクトを作り直す |
-| 同じ UID が別のアドレスに現れた (アドレスの変更) | 古いアドレスのオブジェクトを消し、新しいアドレスに作る |
+| 同じ UID が別のアドレスに現れた (アドレスの変更) | 古いアドレスのオブジェクトを消し、新しいアドレスのオブジェクトを作る (新しいアドレスの番号を振る。古いアドレスの番号は対応表に残る) |
 | 名前・ファームウェアの版が変わった | 該当するオブジェクトの値を更新する |
 | config を受けていない子機の data | 無視する (config を待つ) |
 
