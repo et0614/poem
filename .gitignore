@@ -512,3 +512,6 @@ dkms.conf
 
 # 仕様書の Word 出力 (md から作り直す)
 docs/spec/build/
+
+# 手元の参照用データシート
+hardware/datasheets/

@@ -1,14 +1,16 @@
 # PoEM Link 基板
 
-USB-MIDI ⇔ I²C ブリッジ (AVR32DU20)。ファームウェアは `firmware/poem_link.X`、通信仕様は Drive の `PoEM_Link_通信仕様.md`。
+USB-MIDI ⇔ I²C ブリッジ (AVR32DU20)。ファームウェアは `firmware/poem_link.X`、通信仕様は仕様書の 6.2 節 (`docs/spec/src/60_link.md`)。
 
 | ファイル | 内容 |
 |---|---|
-| `PoEM_Link_schematic.pdf` | 回路図 |
-| `PoEM_Link_gerber.zip` | ガーバー (JLCPCB にそのまま上げる) |
-| `PoEM_Link_BOM_JLCPCB.csv` | 実装用 BOM (JLCPCB 形式) |
-| `PoEM_Link_CPL_JLCPCB.csv` | 実装用 部品配置 (JLCPCB 形式) |
-| `fusion_export/` | Fusion から書き出した元データ (部品表・PnP) |
+| `poem_link_schematic.pdf` | 回路図 |
+| `fab/poem_link_gerber.zip` | ガーバー (JLCPCB にそのまま上げる) |
+| `fab/poem_link_BOM.csv` | 実装用 BOM (JLCPCB 形式) |
+| `fab/poem_link_CPL.csv` | 実装用 部品配置 (JLCPCB 形式) |
+| `poem_link_3d.png` | 3 次元の姿図 |
+
+設計の元データ (`poem_link.f3z`) はまだ入っていない。
 
 ## BOM の部品
 
@@ -18,7 +20,7 @@ USB-MIDI ⇔ I²C ブリッジ (AVR32DU20)。ファームウェアは `firmware/
 | C3, C4 | 100nF 0402 | C1525 | Basic | VDD・VUSB のパスコン |
 | D1 | 赤 LED 0603 (KT-0603R) | C2286 | Basic | 回路図の SML-D12D1WT86 (橙) は JLCPCB の在庫が数個しかないため置き換え |
 | R1 | 1kΩ 0402 | C11702 | Basic | LED の電流 約 1.3 mA |
-| RN1, RN2 | 10kΩ×4 アレイ EXB28V103JX | C178757 | Extended | 2 本並列で約 5kΩ (CC プルダウン、I²C プルアップ) |
+| RN1, RN2 | 10kΩ×4 アレイ 4D02WGJ0103TCE (UNI-ROYAL) | C25725 | Preferred | 2 本並列で約 5kΩ (CC プルダウン、I²C プルアップ)。0402×4 のアレイは全基板でこの品にそろえる。初回の発注 (2026-10) は EXB28V103JX (Panasonic、C178757) |
 | J1 | TYPE-C-31-M-14 | C223907 | Extended | |
 | J2 | SM04B-SRSS-TB (Qwiic) | C160404 | Extended | 安価な互換品 XY-SM04B-SRSS-TB (C51940130) もある |
 | U1 | XC6206P332MR-G | C5446 | Basic | |
