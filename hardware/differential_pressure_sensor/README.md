@@ -5,7 +5,7 @@ SDP810-500PA (±500 Pa) で差圧を測る。測定範囲の狭い SDP810-125PA 
 | ファイル | 内容 |
 |---|---|
 | `poem_differential_pressure_sensor.f3z` | 設計の元データ (Fusion) |
-| `poem_differential_pressure_sensor_schematic.pdf` | 回路図 (未作成) |
+| `poem_differential_pressure_sensor_schematic.pdf` | 回路図 |
 | `poem_differential_pressure_sensor_3d_1.png`、`_3d_2.png` | 3 次元の姿図 (表、裏) |
 | `fab/poem_differential_pressure_sensor_gerber.zip` | ガーバー (Fusion の CAM 出力。JLCPCB にそのまま上げる) |
 | `fab/poem_differential_pressure_sensor_BOM.csv` | 実装用 BOM (JLCPCB 形式) |
