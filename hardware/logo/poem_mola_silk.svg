@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- hardware/logo/make_mola.py で生成。手で編集しない -->
+<!-- PoEM のマンボウ (シルク用、1 色)。青い基板に白いシルクで刷る。目と口は抜き。幅 8 mm で、いちばん細い所 (目の光のまわり) が 0.4 mm -->
+<svg width="8mm" height="10.53mm" viewBox="26 13 120 158" version="1.1" xmlns="http://www.w3.org/2000/svg">
+    <path fill="#000000" fill-rule="evenodd" d="M98.25 48.93 L112 18 Q121 8 130 18 L138 62 L127.06 59.92 A60 44 0 0 1 127.06 124.08 L138 122 L130 166 Q121 176 112 166 L98.25 135.07 A60 44 0 0 1 28.27 104 L36 104 L36 80 L28.27 80 A60 44 0 0 1 98.25 48.93 Z M51 66 H75 A3 3 0 0 1 78 69 V93 A3 3 0 0 1 75 96 H51 A3 3 0 0 1 48 93 V69 A3 3 0 0 1 51 66 Z M54 72 H64 V82 H54 Z" />
+</svg>

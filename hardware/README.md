@@ -30,6 +30,12 @@ xxx/
 - ファイル名は `poem_<フォルダ名>_<種類>` とする。ファイルは発注や受け渡しでリポジトリの外に出るので、外でも何のファイルか分かるよう `poem_` を付ける。
 - 版はフォルダで分けず、git の履歴と各 README の版の欄で管理する。
 
+## ロゴ
+
+`logo/` は、基板の形をしたマンボウのロゴ。形は [`logo/make_mola.py`](logo/make_mola.py) の 1 か所で定め、シルク用 ([`logo/poem_mola_silk.svg`](logo/poem_mola_silk.svg)、1 色、幅 8 mm) とアプリのアイコン・起動画面・記録欄のマンボウ (`software/src/PoEMLink.App/Resources/`) の SVG をすべてここから作る。形を直したら `python hardware/logo/make_mola.py` を実行し直す。
+
+- シルクは青い基板に白で刷る。目と口は抜き。
+
 ## 全基板の BOM
 
 [`poem_bom.xlsx`](poem_bom.xlsx) は、各基板の `fab/*_BOM.*` から作る一覧である。シート「集計」は部品ごとの基板別の数量、ほかのシートは基板ごとの BOM。
