@@ -54,6 +54,10 @@ namespace PoEMLink.App.ViewModels
     [ObservableProperty]
     private bool hasRecord;
 
+    /// <summary>計測値の入った行を記録するたびに 1 増える (記録欄のマンボウが口を動かす)</summary>
+    [ObservableProperty]
+    private int recordPulse;
+
     /// <summary>記録の間隔 [s]</summary>
     [ObservableProperty]
     private int recordIntervalSec = 1;
@@ -278,6 +282,8 @@ namespace PoEMLink.App.ViewModels
         {
           _recorder.Add(DateTime.Now, Nodes.SelectMany(n => n.RecordCells()).ToList());
           UpdateRecordText();
+          // 値が取れている子機があるときだけ口を動かす。通信が途絶えたら口が止まる
+          if (Nodes.Any(n => n.IsOnline)) RecordPulse++;
         }
         while (await timer.WaitForNextTickAsync(ct));
       }

@@ -5,17 +5,17 @@
 
     <!-- Note: For Android please see also Platforms\Android\Resources\values\colors.xml -->
 
-    <Color x:Key="Primary">#E8590C</Color>
-    <Color x:Key="PrimaryDark">#FF922B</Color>
+    <Color x:Key="Primary">#1565C0</Color>
+    <Color x:Key="PrimaryDark">#64B5F6</Color>
     <Color x:Key="PrimaryDarkText">#242424</Color>
-    <Color x:Key="Secondary">#FFE8CC</Color>
-    <Color x:Key="SecondaryDarkText">#FFC078</Color>
-    <Color x:Key="Tertiary">#A63E00</Color>
+    <Color x:Key="Secondary">#E3F2FD</Color>
+    <Color x:Key="SecondaryDarkText">#90CAF9</Color>
+    <Color x:Key="Tertiary">#0D47A1</Color>
 
     <Color x:Key="White">White</Color>
     <Color x:Key="Black">Black</Color>
-    <Color x:Key="Magenta">#D9480F</Color>
-    <Color x:Key="MidnightBlue">#3D1A00</Color>
+    <Color x:Key="Magenta">#1976D2</Color>
+    <Color x:Key="MidnightBlue">#0A2F66</Color>
     <Color x:Key="OffBlack">#1f1f1f</Color>
 
     <Color x:Key="Gray100">#E1E1E1</Color>
@@ -30,7 +30,7 @@
     <!-- 画面の背景とカード -->
     <Color x:Key="CardLight">#FFFFFF</Color>
     <Color x:Key="CardDark">#262626</Color>
-    <Color x:Key="PageLight">#FFF7F0</Color>
+    <Color x:Key="PageLight">#F3F8FE</Color>
     <Color x:Key="PageDark">#141414</Color>
 
     <SolidColorBrush x:Key="PrimaryBrush" Color="{StaticResource Primary}"/>
