@@ -51,9 +51,9 @@ void PIN_MANAGER_Initialize()
     PORTF.OUT = 0x0;
 
   /* DIR Registers Initialization */
-    PORTA.DIR = 0x2;
+    PORTA.DIR = 0x0;
     PORTC.DIR = 0x0;
-    PORTD.DIR = 0x0;
+    PORTD.DIR = 0x20;
     PORTF.DIR = 0x10;
 
   /* PINxCTRL registers Initialization */
@@ -196,10 +196,6 @@ ISR(PORTA_PORT_vect)
     {
        RST_SW_InterruptHandler(); 
     }
-    if(VPORTA.INTFLAGS & PORT_INT1_bm)
-    {
-       LED_InterruptHandler(); 
-    }
     /* Clear interrupt flags */
     VPORTA.INTFLAGS = 0xff;
 }
@@ -221,6 +217,11 @@ ISR(PORTC_PORT_vect)
 
 ISR(PORTD_PORT_vect)
 { 
+    // Call the interrupt handler for the callback registered at runtime
+    if(VPORTD.INTFLAGS & PORT_INT5_bm)
+    {
+       LED_InterruptHandler(); 
+    }
     /* Clear interrupt flags */
     VPORTD.INTFLAGS = 0xff;
 }

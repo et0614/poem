@@ -115,23 +115,23 @@
 #define PA0_SetInterruptHandler RST_SW_SetInterruptHandler
 
 //get/set LED aliases
-#define LED_SetHigh() do { PORTA_OUTSET = 0x2; } while(0)
-#define LED_SetLow() do { PORTA_OUTCLR = 0x2; } while(0)
-#define LED_Toggle() do { PORTA_OUTTGL = 0x2; } while(0)
-#define LED_GetValue() (VPORTA.IN & (0x1 << 1))
-#define LED_SetDigitalInput() do { PORTA_DIRCLR = 0x2; } while(0)
-#define LED_SetDigitalOutput() do { PORTA_DIRSET = 0x2; } while(0)
-#define LED_SetPullUp() do { PORTA_PIN1CTRL  |= PORT_PULLUPEN_bm; } while(0)
-#define LED_ResetPullUp() do { PORTA_PIN1CTRL  &= ~PORT_PULLUPEN_bm; } while(0)
-#define LED_SetInverted() do { PORTA_PIN1CTRL  |= PORT_INVEN_bm; } while(0)
-#define LED_ResetInverted() do { PORTA_PIN1CTRL  &= ~PORT_INVEN_bm; } while(0)
-#define LED_DisableInterruptOnChange() do { PORTA.PIN1CTRL = (PORTA.PIN1CTRL & ~PORT_ISC_gm) | 0x0 ; } while(0)
-#define LED_EnableInterruptForBothEdges() do { PORTA.PIN1CTRL = (PORTA.PIN1CTRL & ~PORT_ISC_gm) | 0x1 ; } while(0)
-#define LED_EnableInterruptForRisingEdge() do { PORTA.PIN1CTRL = (PORTA.PIN1CTRL & ~PORT_ISC_gm) | 0x2 ; } while(0)
-#define LED_EnableInterruptForFallingEdge() do { PORTA.PIN1CTRL = (PORTA.PIN1CTRL & ~PORT_ISC_gm) | 0x3 ; } while(0)
-#define LED_DisableDigitalInputBuffer() do { PORTA.PIN1CTRL = (PORTA.PIN1CTRL & ~PORT_ISC_gm) | 0x4 ; } while(0)
-#define LED_EnableInterruptForLowLevelSensing() do { PORTA.PIN1CTRL = (PORTA.PIN1CTRL & ~PORT_ISC_gm) | 0x5 ; } while(0)
-#define PA1_SetInterruptHandler LED_SetInterruptHandler
+#define LED_SetHigh() do { PORTD_OUTSET = 0x20; } while(0)
+#define LED_SetLow() do { PORTD_OUTCLR = 0x20; } while(0)
+#define LED_Toggle() do { PORTD_OUTTGL = 0x20; } while(0)
+#define LED_GetValue() (VPORTD.IN & (0x1 << 5))
+#define LED_SetDigitalInput() do { PORTD_DIRCLR = 0x20; } while(0)
+#define LED_SetDigitalOutput() do { PORTD_DIRSET = 0x20; } while(0)
+#define LED_SetPullUp() do { PORTD_PIN5CTRL  |= PORT_PULLUPEN_bm; } while(0)
+#define LED_ResetPullUp() do { PORTD_PIN5CTRL  &= ~PORT_PULLUPEN_bm; } while(0)
+#define LED_SetInverted() do { PORTD_PIN5CTRL  |= PORT_INVEN_bm; } while(0)
+#define LED_ResetInverted() do { PORTD_PIN5CTRL  &= ~PORT_INVEN_bm; } while(0)
+#define LED_DisableInterruptOnChange() do { PORTD.PIN5CTRL = (PORTD.PIN5CTRL & ~PORT_ISC_gm) | 0x0 ; } while(0)
+#define LED_EnableInterruptForBothEdges() do { PORTD.PIN5CTRL = (PORTD.PIN5CTRL & ~PORT_ISC_gm) | 0x1 ; } while(0)
+#define LED_EnableInterruptForRisingEdge() do { PORTD.PIN5CTRL = (PORTD.PIN5CTRL & ~PORT_ISC_gm) | 0x2 ; } while(0)
+#define LED_EnableInterruptForFallingEdge() do { PORTD.PIN5CTRL = (PORTD.PIN5CTRL & ~PORT_ISC_gm) | 0x3 ; } while(0)
+#define LED_DisableDigitalInputBuffer() do { PORTD.PIN5CTRL = (PORTD.PIN5CTRL & ~PORT_ISC_gm) | 0x4 ; } while(0)
+#define LED_EnableInterruptForLowLevelSensing() do { PORTD.PIN5CTRL = (PORTD.PIN5CTRL & ~PORT_ISC_gm) | 0x5 ; } while(0)
+#define PD5_SetInterruptHandler LED_SetInterruptHandler
 
 //get/set SLP aliases
 #define SLP_SetHigh() do { PORTF_OUTSET = 0x10; } while(0)

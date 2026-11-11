@@ -9,7 +9,8 @@
  * ユーザー領域 (0x1000〜) に線形補正係数 (気圧・温度の a, b) を置き、
  * corrected = a * raw + b で補正する。
  *
- * この基板に LED は無い。リセットスイッチを 3 秒長押しすると工場出荷状態に戻る。
+ * LED (接続確認用) は識別コマンドで 2 Hz で点滅させる (PoEM Link の識別と同じ速さ)。
+ * 工場リセットのスイッチは持たない。上位機器からアドレス・名前・ユーザー領域を書き換えて戻す。
  */
 
 // <editor-fold defaultstate="collapsed" desc="include">
@@ -45,12 +46,11 @@
 #define RTC_PERIOD_TICK     (4095)  // 32768 / TICKS_PER_SEC - 1
 #define AVG_N               (8)
 
-// リセットスイッチ長押しで工場出荷状態に戻す [秒]
-#define RESET_HOLD_SECONDS  (3)
-#define RESET_HOLD_TICKS    (RESET_HOLD_SECONDS * TICKS_PER_SEC)
-
 // BMP585 の読み出しがこの回数 (= 1 秒) 続けて失敗したら初期化し直す
 #define SENSOR_RESTART_FAILS (TICKS_PER_SEC)
+
+// 識別の点滅: 2 計測周期 (250 ms) ごとに点灯と消灯を入れ替える = 2 Hz
+#define IDENTIFY_HALF_TICKS (2)
 
 // </editor-fold>
 
@@ -67,6 +67,17 @@ typedef struct {
 static user_region_t       s_user;
 static const user_region_t s_user_default = { 1.0f, 0.0f, 1.0f, 0.0f };
 
+// 識別の点滅の残り [計測周期]。OSL_Task とメインループの計測処理だけが触る (どちらも割り込みの外)
+static uint16_t s_identify_ticks = 0;
+
+// 識別コマンド (OSL_Task から)。seconds = 0 は停止。
+// 秒数は最大 255 なので、計測周期の数 (最大 2040) で数える (ms だと uint16 からあふれる)。
+static void onIdentify(uint8_t seconds)
+{
+    s_identify_ticks = (uint16_t)seconds * TICKS_PER_SEC;
+    if (s_identify_ticks == 0) LED_SetLow();
+}
+
 static const osl_channel_t s_channels[2] = {
     { 53, OSL_TYPE_FLOAT32, "Press", 6, 0           },   // 絶対圧 [Pa]
     { 62, OSL_TYPE_FLOAT32, "Temp",  4, OSL_CHF_AUX },   // センサ温度 [°C]
@@ -81,7 +92,8 @@ static const osl_config_t s_osl = {
     .update_period_ms = TICK_MS,
     .channel_count    = 2,
     .channels         = s_channels,
-    .capability       = OSL_CAP_CH_ATTR | OSL_CAP_EXT_STATUS | OSL_CAP_CMD_RESET,
+    .capability       = OSL_CAP_CH_ATTR | OSL_CAP_EXT_STATUS | OSL_CAP_CMD_RESET
+                      | OSL_CAP_CMD_IDENTIFY,
     .hw_rev           = 0,
     .avg_window_ms    = TICK_MS * AVG_N,
     .warmup_ms        = TICK_MS * AVG_N,
@@ -90,7 +102,7 @@ static const osl_config_t s_osl = {
     .user_size        = sizeof(s_user),
     .user_writable    = true,
     .user_default     = &s_user_default,
-    .on_identify      = NULL,       // LED が無いので識別コマンドは持たない
+    .on_identify      = onIdentify,
     .on_user_changed  = NULL,
 };
 
@@ -196,7 +208,6 @@ int main(void)
     sei();
 
     OSL_SetNotReady(true);
-    uint8_t rst_hold_count = 0;
     uint8_t tick_in_sec    = 0;
 
     while (1)
@@ -209,14 +220,12 @@ int main(void)
             g_meas_tick = false;
             OSL_Tick(TICK_MS);
 
-            // リセットスイッチ長押し判定 (RESET_HOLD_SECONDS 秒で発動)
-            if (IO_RESET_GetValue() == 0) {
-                if (++rst_hold_count >= RESET_HOLD_TICKS) {
-                    OSL_FactoryReset();
-                    rst_hold_count = 0;
-                }
-            } else {
-                rst_hold_count = 0;
+
+            // 識別の点滅 (2 Hz)。最後は必ず消灯で終わる
+            if (s_identify_ticks) {
+                s_identify_ticks--;
+                if (s_identify_ticks && (s_identify_ticks / IDENTIFY_HALF_TICKS) & 1) LED_SetHigh();
+                else                                                                 LED_SetLow();
             }
 
             // BMP585 がひとりで再起動していないかを 1 秒ごとに確かめる。

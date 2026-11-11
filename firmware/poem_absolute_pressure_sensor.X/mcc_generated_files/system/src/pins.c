@@ -39,6 +39,7 @@ static void (*IO_M_SDA_InterruptHandler)(void);
 static void (*IO_S_SCL_InterruptHandler)(void);
 static void (*IO_S_SDA_InterruptHandler)(void);
 static void (*IO_RESET_InterruptHandler)(void);
+static void (*LED_InterruptHandler)(void);
 
 void PIN_MANAGER_Initialize()
 {
@@ -53,7 +54,7 @@ void PIN_MANAGER_Initialize()
     PORTA.DIR = 0x0;
     PORTC.DIR = 0x0;
     PORTD.DIR = 0x0;
-    PORTF.DIR = 0x0;
+    PORTF.DIR = 0x2;
 
   /* PINxCTRL registers Initialization */
     PORTA.PIN0CTRL = 0x0;
@@ -107,6 +108,7 @@ void PIN_MANAGER_Initialize()
     IO_S_SCL_SetInterruptHandler(IO_S_SCL_DefaultInterruptHandler);
     IO_S_SDA_SetInterruptHandler(IO_S_SDA_DefaultInterruptHandler);
     IO_RESET_SetInterruptHandler(IO_RESET_DefaultInterruptHandler);
+    LED_SetInterruptHandler(LED_DefaultInterruptHandler);
 }
 
 /**
@@ -174,6 +176,19 @@ void IO_RESET_DefaultInterruptHandler(void)
     // add your IO_RESET interrupt custom code
     // or set custom function using IO_RESET_SetInterruptHandler()
 }
+/**
+  Allows selecting an interrupt handler for LED at application runtime
+*/
+void LED_SetInterruptHandler(void (* interruptHandler)(void)) 
+{
+    LED_InterruptHandler = interruptHandler;
+}
+
+void LED_DefaultInterruptHandler(void)
+{
+    // add your LED interrupt custom code
+    // or set custom function using LED_SetInterruptHandler()
+}
 ISR(PORTA_PORT_vect)
 { 
     // Call the interrupt handler for the callback registered at runtime
@@ -216,6 +231,10 @@ ISR(PORTF_PORT_vect)
     if(VPORTF.INTFLAGS & PORT_INT2_bm)
     {
        IO_M_SDA_InterruptHandler(); 
+    }
+    if(VPORTF.INTFLAGS & PORT_INT1_bm)
+    {
+       LED_InterruptHandler(); 
     }
     /* Clear interrupt flags */
     VPORTF.INTFLAGS = 0xff;

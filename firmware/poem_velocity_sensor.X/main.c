@@ -13,7 +13,8 @@
  *   0x1018 m3, lnC3, vSplit1, vSplit2 (float×4)  (v1 の coefficientB[0..3])
  *
  * 計測は 20 ms 周期 (ADC + 指数平滑)。親機には 500 ms ごとに新しい値を公開する。
- * LED は識別コマンドで点滅させる。リセットスイッチを 3 秒長押しすると工場出荷状態に戻る。
+ * LED (接続確認用、PD5) は識別コマンドで 2 Hz で点滅させる (PoEM Link・ほかの子機と同じ速さ)。
+ * 工場リセットのスイッチは持たない。上位機器からアドレス・名前・ユーザー領域を書き換えて戻す。
  */
 
 // <editor-fold defaultstate="collapsed" desc="include">
@@ -46,14 +47,13 @@
 
 #define HEATING_MSEC    (5000)  // 白金抵抗予熱時間 [msec]
 #define TICK_MS         (20)    // タイマ割り込み間隔 [msec] (RTC PER = 654 → 32768/655 Hz)
-#define RESET_TIME      (3000)  // Reset 押し続け時間 [msec]
 
 // 新しい値を公開する周期 [ms]。計測そのものは 20 ms ごとに行い、指数平滑で均す。
 #define PUBLISH_MS      (500)
 #define PUBLISH_TICKS   (PUBLISH_MS / TICK_MS)
 
-// 識別表示の点滅の半周期 [ms] (4 Hz)
-#define IDENTIFY_HALF_MS (120)
+// 識別表示の点滅の半周期 [ms] (2 Hz)
+#define IDENTIFY_HALF_MS (250)
 
 // </editor-fold>
 
@@ -121,8 +121,7 @@ static const osl_config_t s_osl = {
 
 static volatile uint8_t tick_count = 0;
 static uint16_t heating_timer = HEATING_MSEC;
-static uint16_t reset_timer   = RESET_TIME;
-static uint16_t identify_ms   = 0;      // 識別表示の残り時間
+static uint32_t identify_ms   = 0;      // 識別表示の残り時間 (255 秒 = 255000 ms は uint16 からあふれる)
 static uint8_t  enabled       = 1;      // 現在の風速計回路の状態
 
 // 風速電圧平滑化フィルタ
@@ -191,7 +190,7 @@ static void applyEnable(uint8_t enable)
 
 static void onIdentify(uint8_t seconds)
 {
-    identify_ms = (uint16_t)seconds * 1000U;
+    identify_ms = (uint32_t)seconds * 1000UL;
     if (identify_ms == 0) LED_SetLow();
 }
 
@@ -250,20 +249,10 @@ int main(void)
             ATOMIC_BLOCK(ATOMIC_RESTORESTATE) { tick_count--; }
             OSL_Tick(TICK_MS);
 
-            // リセットスイッチ長押し → 工場出荷状態
-            if (RST_SW_GetValue() == 0) {
-                reset_timer = (reset_timer < TICK_MS) ? 0 : (uint16_t)(reset_timer - TICK_MS);
-                if (reset_timer == 0) {
-                    OSL_FactoryReset();
-                    reset_timer = RESET_TIME;
-                }
-            } else {
-                reset_timer = RESET_TIME;
-            }
 
-            // 識別表示 (4 Hz の点滅)
+            // 識別表示 (2 Hz の点滅)
             if (identify_ms) {
-                identify_ms = (identify_ms < TICK_MS) ? 0 : (uint16_t)(identify_ms - TICK_MS);
+                identify_ms = (identify_ms < TICK_MS) ? 0 : identify_ms - TICK_MS;
                 if (identify_ms && (identify_ms / IDENTIFY_HALF_MS) & 1) LED_SetHigh();
                 else                                                     LED_SetLow();
             }
