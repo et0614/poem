@@ -5,7 +5,7 @@
 | ファイル | 内容 |
 |---|---|
 | `poem_pod.f3z` | 設計の元データ (Fusion) |
-| `poem_pod_schematic.pdf` | 回路図 (未作成) |
+| `poem_pod_schematic.pdf` | 回路図 |
 | `poem_pod_3d.png` | 3 次元の姿図 |
 | `poem_pod_3d.stp` | 3 次元のモデル (STEP。ケースの設計に使う) |
 | `fab/poem_pod_gerber.zip` | ガーバー (Fusion の CAM 出力。JLCPCB にそのまま上げる) |
