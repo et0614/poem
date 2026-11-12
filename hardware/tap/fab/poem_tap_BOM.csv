@@ -1,0 +1,4 @@
+Comment,Designator,Footprint,LCSC Part #
+CAS-220TA (DPDT slide switch),SW1,SMD 5.4x3.9 J-hook,C2921538
+10k x4 array 0402 (4D02WGJ0103TCE),RN1,0402x4,C25725
+SM04B-SRSS-TB (Qwiic),"J1,J2,J3",SH 1.0 4P,C160404
