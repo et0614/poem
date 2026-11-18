@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE eagle SYSTEM "eagle.dtd">
+<eagle version="9.6.2">
+<drawing>
+<settings>
+<setting alwaysvectorfont="no"/>
+<setting verticaltext="up"/>
+</settings>
+<grid distance="0.1" unitdist="mm" unit="mm" style="lines" multiple="1" display="no" altdistance="0.01" altunitdist="mm" altunit="mm"/>
+<layers>
+<layer number="1" name="Top" color="4" fill="1" visible="yes" active="yes"/>
+<layer number="16" name="Bottom" color="1" fill="1" visible="yes" active="yes"/>
+<layer number="17" name="Pads" color="2" fill="1" visible="yes" active="yes"/>
+<layer number="18" name="Vias" color="2" fill="1" visible="yes" active="yes"/>
+<layer number="19" name="Unrouted" color="6" fill="1" visible="yes" active="yes"/>
+<layer number="20" name="Dimension" color="15" fill="1" visible="yes" active="yes"/>
+<layer number="21" name="tPlace" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="22" name="bPlace" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="23" name="tOrigins" color="15" fill="1" visible="yes" active="yes"/>
+<layer number="24" name="bOrigins" color="15" fill="1" visible="yes" active="yes"/>
+<layer number="25" name="tNames" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="26" name="bNames" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="27" name="tValues" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="28" name="bValues" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="29" name="tStop" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="30" name="bStop" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="31" name="tCream" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="32" name="bCream" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="35" name="tGlue" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="36" name="bGlue" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="39" name="tKeepout" color="4" fill="1" visible="yes" active="yes"/>
+<layer number="40" name="bKeepout" color="1" fill="1" visible="yes" active="yes"/>
+<layer number="41" name="tRestrict" color="4" fill="1" visible="yes" active="yes"/>
+<layer number="42" name="bRestrict" color="1" fill="1" visible="yes" active="yes"/>
+<layer number="43" name="vRestrict" color="2" fill="1" visible="yes" active="yes"/>
+<layer number="44" name="Drills" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="45" name="Holes" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="46" name="Milling" color="3" fill="1" visible="yes" active="yes"/>
+<layer number="47" name="Measures" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="48" name="Document" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="49" name="Reference" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="51" name="tDocu" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="52" name="bDocu" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="91" name="Nets" color="2" fill="1" visible="yes" active="yes"/>
+<layer number="92" name="Busses" color="1" fill="1" visible="yes" active="yes"/>
+<layer number="93" name="Pins" color="2" fill="1" visible="yes" active="yes"/>
+<layer number="94" name="Symbols" color="4" fill="1" visible="yes" active="yes"/>
+<layer number="95" name="Names" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="96" name="Values" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="97" name="Info" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="98" name="Guide" color="6" fill="1" visible="yes" active="yes"/>
+</layers>
+<library>
+<description>PoEM Pod 用。HanRun HR871150C (LCSC C19724786): PoE 対応の RJ45 (トランス・LED 内蔵、10/100Base-T)。フットプリントは HanRun のデータシート (REV.00) の Recommended PCB layout (部品面から見た図) による。</description>
+<packages>
+<package name="RJ45-TH_HR871150C">
+<description>HR871150C。原点は位置決めの穴 (φ3.25、めっきなし) 2 つの中点。+y が差し込み口 (基板の端) の向きで、口の前面は y = +10.80。信号ピン φ0.89 (穴 0.9)、ピッチ 1.27 の千鳥 (6 番は無い)、LED ピン φ1.02、シールド φ1.63。</description>
+<pad name="1" x="5.715" y="-8.89" drill="0.9" diameter="1.52" shape="square"/>
+<pad name="2" x="4.445" y="-6.35" drill="0.9" diameter="1.52"/>
+<pad name="3" x="3.175" y="-8.89" drill="0.9" diameter="1.52"/>
+<pad name="4" x="1.905" y="-6.35" drill="0.9" diameter="1.52"/>
+<pad name="5" x="0.635" y="-8.89" drill="0.9" diameter="1.52"/>
+<pad name="7" x="-1.905" y="-8.89" drill="0.9" diameter="1.52"/>
+<pad name="8" x="-3.175" y="-6.35" drill="0.9" diameter="1.52"/>
+<pad name="9" x="-4.445" y="-8.89" drill="0.9" diameter="1.52"/>
+<pad name="10" x="-5.715" y="-6.35" drill="0.9" diameter="1.52"/>
+<pad name="11" x="6.625" y="4.08" drill="1.02" diameter="1.7"/>
+<pad name="12" x="4.085" y="4.08" drill="1.02" diameter="1.7"/>
+<pad name="13" x="-4.085" y="4.08" drill="1.02" diameter="1.7"/>
+<pad name="14" x="-6.625" y="4.08" drill="1.02" diameter="1.7"/>
+<pad name="SH1" x="-7.745" y="-3.05" drill="1.63" diameter="2.16"/>
+<pad name="SH2" x="7.745" y="-3.05" drill="1.63" diameter="2.16"/>
+<hole x="-5.715" y="0" drill="3.25"/>
+<hole x="5.715" y="0" drill="3.25"/>
+<wire x1="-8.0" y1="-10.4" x2="8.0" y2="-10.4" width="0.1" layer="51"/>
+<wire x1="8.0" y1="-10.4" x2="8.0" y2="10.8" width="0.1" layer="51"/>
+<wire x1="8.0" y1="10.8" x2="-8.0" y2="10.8" width="0.1" layer="51"/>
+<wire x1="-8.0" y1="10.8" x2="-8.0" y2="-10.4" width="0.1" layer="51"/>
+<wire x1="-8.0" y1="10.8" x2="8.0" y2="10.8" width="0.2" layer="51" style="shortdash"/>
+<text x="-3.5" y="9.2" size="1" layer="51">PCB EDGE</text>
+<wire x1="-8.0" y1="-10.4" x2="8.0" y2="-10.4" width="0.127" layer="21"/>
+<wire x1="-8.0" y1="10.8" x2="8.0" y2="10.8" width="0.127" layer="21"/>
+<wire x1="-8.0" y1="-10.4" x2="-8.0" y2="-4.45" width="0.127" layer="21"/>
+<wire x1="-8.0" y1="-1.65" x2="-8.0" y2="10.8" width="0.127" layer="21"/>
+<wire x1="8.0" y1="-10.4" x2="8.0" y2="-4.45" width="0.127" layer="21"/>
+<wire x1="8.0" y1="-1.65" x2="8.0" y2="10.8" width="0.127" layer="21"/>
+<circle x="6.9" y="-10.0" radius="0.15" width="0.3" layer="21"/>
+<wire x1="-9.2" y1="-11.4" x2="9.2" y2="-11.4" width="0.05" layer="39"/>
+<wire x1="9.2" y1="-11.4" x2="9.2" y2="11.0" width="0.05" layer="39"/>
+<wire x1="9.2" y1="11.0" x2="-9.2" y2="11.0" width="0.05" layer="39"/>
+<wire x1="-9.2" y1="11.0" x2="-9.2" y2="-11.4" width="0.05" layer="39"/>
+<text x="-8.0" y="11.4" size="1.27" layer="25">&gt;NAME</text>
+<text x="-8.0" y="-12.9" size="1.27" layer="27">&gt;VALUE</text>
+</package>
+</packages>
+<symbols>
+<symbol name="RJ45_POE_MAGJACK">
+<pin name="TD+" x="-12.7" y="16.51" length="middle" direction="pas"/>
+<pin name="TD-" x="-12.7" y="13.97" length="middle" direction="pas"/>
+<pin name="CT" x="-12.7" y="11.43" length="middle" direction="pas"/>
+<pin name="RD+" x="-12.7" y="8.89" length="middle" direction="pas"/>
+<pin name="RD-" x="-12.7" y="6.35" length="middle" direction="pas"/>
+<pin name="VC1+" x="-12.7" y="3.81" length="middle" direction="pas"/>
+<pin name="VC1-" x="-12.7" y="1.27" length="middle" direction="pas"/>
+<pin name="VC2+" x="-12.7" y="-1.27" length="middle" direction="pas"/>
+<pin name="VC2-" x="-12.7" y="-3.81" length="middle" direction="pas"/>
+<pin name="YEL_A" x="-12.7" y="-6.35" length="middle" direction="pas"/>
+<pin name="YEL_K" x="-12.7" y="-8.89" length="middle" direction="pas"/>
+<pin name="GRN_A" x="-12.7" y="-11.43" length="middle" direction="pas"/>
+<pin name="GRN_K" x="-12.7" y="-13.97" length="middle" direction="pas"/>
+<pin name="SHIELD" x="-12.7" y="-16.51" length="middle" direction="pas"/>
+<wire x1="-7.62" y1="19.05" x2="7.62" y2="19.05" width="0.254" layer="94"/>
+<wire x1="7.62" y1="19.05" x2="7.62" y2="-19.05" width="0.254" layer="94"/>
+<wire x1="7.62" y1="-19.05" x2="-7.62" y2="-19.05" width="0.254" layer="94"/>
+<wire x1="-7.62" y1="-19.05" x2="-7.62" y2="19.05" width="0.254" layer="94"/>
+<text x="-7.62" y="20.32" size="1.778" layer="95">&gt;NAME</text>
+<text x="-7.62" y="-21.59" size="1.778" layer="96">&gt;VALUE</text>
+<text x="0" y="0" size="1.27" layer="94" rot="R90" align="center">RJ45 PoE MagJack</text>
+</symbol>
+</symbols>
+<devicesets>
+<deviceset name="HR871150C" prefix="J">
+<description>HanRun HR871150C。チップ側 TD+ (P1)・TD− (P2)・CT (P3、送受の中点タップを内部で共通)・RD+ (P4)・RD− (P5)。ケーブル側の中点タップ VC1+ (P7、J1/J2)・VC1− (P8、J3/J6)・VC2+ (P9、J4/J5)・VC2− (P10、J7/J8)、57 V・350 mA/タップ。黄 LED (11 アノード、12 カソード)、緑 LED (13 アノード、14 カソード)、シールド。Bob Smith 終端 (22 nF + 75 Ω × 4) と 1000 pF 2 kV (シールド) を内蔵。LED の極性 (どちらがアノードか) はデータシートの図で確かめること。</description>
+<gates>
+<gate name="G$1" symbol="RJ45_POE_MAGJACK" x="0" y="0"/>
+</gates>
+<devices>
+<device name="" package="RJ45-TH_HR871150C">
+<connects>
+<connect gate="G$1" pin="TD+" pad="1"/>
+<connect gate="G$1" pin="TD-" pad="2"/>
+<connect gate="G$1" pin="CT" pad="3"/>
+<connect gate="G$1" pin="RD+" pad="4"/>
+<connect gate="G$1" pin="RD-" pad="5"/>
+<connect gate="G$1" pin="VC1+" pad="7"/>
+<connect gate="G$1" pin="VC1-" pad="8"/>
+<connect gate="G$1" pin="VC2+" pad="9"/>
+<connect gate="G$1" pin="VC2-" pad="10"/>
+<connect gate="G$1" pin="YEL_A" pad="11"/>
+<connect gate="G$1" pin="YEL_K" pad="12"/>
+<connect gate="G$1" pin="GRN_A" pad="13"/>
+<connect gate="G$1" pin="GRN_K" pad="14"/>
+<connect gate="G$1" pin="SHIELD" pad="SH1 SH2"/>
+</connects>
+<technologies>
+<technology name="">
+<attribute name="MPN" value="HR871150C"/>
+<attribute name="MANUFACTURER" value="HanRun"/>
+<attribute name="LCSC" value="C19724786"/>
+</technology>
+</technologies>
+</device>
+</devices>
+</deviceset>
+</devicesets>
+</library>
+</drawing>
+</eagle>
