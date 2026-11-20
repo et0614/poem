@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PoEM Link</title>
+<meta name="description" content="PoEM Link: PoEM 計測システムの補助アプリ。サポートとプライバシーポリシー / Support and privacy policy for the PoEM Link app.">
+<style>
+  :root {
+    --primary: #1565C0;
+    --primary-dark: #0D47A1;
+    --text: #1f2328;
+    --muted: #57606a;
+    --bg: #F3F8FE;
+    --card: #ffffff;
+    --line: #d8e3f0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --primary: #64B5F6;
+      --primary-dark: #90CAF9;
+      --text: #e6edf3;
+      --muted: #9da7b3;
+      --bg: #0d1117;
+      --card: #161b22;
+      --line: #30363d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  header {
+    background: #1565C0;
+    color: #fff;
+    padding: 28px 16px;
+  }
+  header .inner { max-width: 820px; margin: 0 auto; display: flex; align-items: center; gap: 16px; }
+  header svg { width: 44px; height: auto; flex: none; }
+  header h1 { margin: 0; font-size: 1.6rem; letter-spacing: 0.02em; }
+  header p { margin: 2px 0 0; opacity: 0.85; font-size: 0.95rem; }
+  nav { max-width: 820px; margin: 16px auto 0; padding: 0 16px; font-size: 0.95rem; }
+  nav a { margin-right: 1.2em; }
+  main { max-width: 820px; margin: 0 auto; padding: 8px 16px 48px; }
+  section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 4px 24px 16px;
+    margin-top: 20px;
+  }
+  h2 { color: var(--primary); font-size: 1.3rem; margin: 20px 0 8px; }
+  h3 { font-size: 1.05rem; margin: 20px 0 4px; }
+  p { margin: 6px 0; }
+  ul { padding-left: 1.4em; margin: 6px 0; }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .muted { color: var(--muted); font-size: 0.9rem; }
+  footer { max-width: 820px; margin: 0 auto; padding: 0 16px 32px; color: var(--muted); font-size: 0.85rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="inner">
+    <!-- PoEM のマンボウ (hardware/logo/make_mola.py の形) -->
+    <svg viewBox="26 13 120 158" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path fill="#ffffff" fill-rule="evenodd" d="M98.25 48.93 L112 18 Q121 8 130 18 L138 62 L127.06 59.92 A60 44 0 0 1 127.06 124.08 L138 122 L130 166 Q121 176 112 166 L98.25 135.07 A60 44 0 0 1 28.27 104 L36 104 L36 80 L28.27 80 A60 44 0 0 1 98.25 48.93 Z M51 66 H75 A3 3 0 0 1 78 69 V93 A3 3 0 0 1 75 96 H51 A3 3 0 0 1 48 93 V69 A3 3 0 0 1 51 66 Z M54 72 H64 V82 H54 Z" />
+    </svg>
+    <div>
+      <h1>PoEM Link</h1>
+      <p>PoEM 計測システムの補助アプリ / Companion app for the PoEM measurement system</p>
+    </div>
+  </div>
+</header>
+
+<nav>
+  <a href="#ja">日本語</a>
+  <a href="#privacy-ja">プライバシーポリシー</a>
+  <a href="#en">English</a>
+  <a href="#privacy">Privacy Policy</a>
+</nav>
+
+<main>
+
+<section id="ja" lang="ja">
+  <h2>PoEM Link について</h2>
+  <p>
+    PoEM Link は、PoEM 計測システムの補助アプリです。USB-MIDI の中継器「PoEM Link」をスマートフォンや PC につなぐと、
+    Qwiic (I²C) で接続した PoEM の子機を自動で見つけ、計測値をその場で表示します。
+    計測値の記録と CSV での書き出し、子機の名前と I²C アドレスの変更もできます。
+  </p>
+  <p>ご利用には PoEM Link 本体と PoEM の子機が必要です。本体がなくても、模擬モードで画面と操作を試せます。</p>
+
+  <h3>サポート</h3>
+  <p>不具合のご報告やご質問は、下記のお問い合わせ先までお願いします。お使いの端末と OS の版、アプリの版を書き添えていただくと助かります。</p>
+
+  <h3 id="privacy-ja">プライバシーポリシー</h3>
+  <ul>
+    <li><strong>利用者情報の収集</strong>: 本ソフトウェアは、利用者の個人情報を収集しません。</li>
+    <li><strong>利用者情報の利用</strong>: 本ソフトウェアは、利用者の個人情報を利用しません。計測値は端末の中だけで処理し、記録したデータは、利用者が共有を選んだときにだけ CSV ファイルとして書き出します。</li>
+    <li><strong>第三者への提供</strong>: 本ソフトウェアは、利用者の個人情報を第三者に提供しません。広告・解析・追跡の仕組みは使わず、ネットワークを介した通信も行いません。</li>
+    <li><strong>お問い合わせ</strong>: <a href="mailto:e.togashi@gmail.com">e.togashi@gmail.com</a></li>
+  </ul>
+</section>
+
+<section id="en" lang="en">
+  <h2>About PoEM Link</h2>
+  <p>
+    PoEM Link is a companion app for the PoEM building-environment measurement system.
+    Connect the PoEM Link USB-MIDI bridge to your phone or PC, and the app finds PoEM sensor nodes
+    on the Qwiic (I²C) bus and shows their readings in real time.
+    You can also record readings and export them as CSV, and rename nodes or change their I²C addresses.
+  </p>
+  <p>The app requires a PoEM Link and PoEM sensor nodes. Without them, you can try the screens in demo mode.</p>
+
+  <h3>Support</h3>
+  <p>For bug reports and questions, please contact us at the address below. It helps if you include your device, OS version and app version.</p>
+
+  <h3 id="privacy">Privacy Policy</h3>
+  <ul>
+    <li><strong>Collection of user information</strong>: This software does not collect any personal information from users.</li>
+    <li><strong>Use of user information</strong>: This software does not use any personal information of users. Measurement data is processed only on the device. Recorded data is exported as a CSV file only when the user chooses to share it.</li>
+    <li><strong>Provision to third parties</strong>: This software does not provide any personal information of users to third parties. It does not use advertising, analytics or tracking services, and it does not communicate over the network.</li>
+    <li><strong>Contact</strong>: <a href="mailto:e.togashi@gmail.com">e.togashi@gmail.com</a></li>
+  </ul>
+</section>
+
+</main>
+
+<footer>
+  <p>© Eisuke Togashi</p>
+</footer>
+
+</body>
+</html>
