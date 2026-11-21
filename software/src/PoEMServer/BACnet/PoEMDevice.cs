@@ -24,7 +24,7 @@ namespace PoEMServer.BACnet
     ///
     /// 子機のオブジェクト (base = pbase + adr × 100):
     ///   base+0   DateTimeValue    最終受信日時
-    ///   base+1   CharStringValue  Device ID (16 B の UID の FNV-1a 22bit。v1 の device_id と同じ値。説明に UID を記す)
+    ///   base+1   CharStringValue  表示用 ID (16 B の UID の FNV-1a 22bit に 0x100000 を足した 16 進 6 桁。説明に UID を記す)
     ///   base+2   CharStringValue  名前 (子機の EEPROM に保存されている呼び名)
     ///   base+3   AnalogInput      異常チャネルのビット (bit i = チャネル i の状態が正常でない)
     ///   base+4   AnalogInput      sample_seq
@@ -251,7 +251,7 @@ namespace PoEMServer.BACnet
             System.Array.Fill(child.LastStatus, 0u);
 
             AddDateTimeValue(b + 0u, $"{disp}_DT",    $"Last data publish time of {disp}", DateTime.Now);
-            AddCharString  (b + 1u, $"{disp}_ID",    $"Device ID (FNV-1a 22bit of UID {child.Uid}) of {disp}", DeviceId.FromUid(child.Uid).ToString());
+            AddCharString  (b + 1u, $"{disp}_ID",    $"Display ID (FNV-1a 22bit of UID {child.Uid}, + 0x100000 in hex) of {disp}", DeviceId.DisplayFromUid(child.Uid));
             AddCharString  (b + 2u, $"{disp}_NAME",  $"Configured label of {disp}", child.Name);
             AddAnalogInput (b + 3u, $"{disp}_FAULT", $"Faulty channel bits of {disp}", 0, BACNET_UNITS_NO_UNITS);
             AddAnalogInput (b + 4u, $"{disp}_SEQ",   $"Sample sequence of {disp}", 0, BACNET_UNITS_NO_UNITS);
@@ -429,7 +429,7 @@ namespace PoEMServer.BACnet
         private static string DisplayName(ChildNode child)
         {
             string n = child.Name?.Trim() ?? "";
-            string label = string.IsNullOrEmpty(n) ? $"Node_{DeviceId.FromUid(child.Uid)}" : n;
+            string label = string.IsNullOrEmpty(n) ? $"Node_{DeviceId.DisplayFromUid(child.Uid)}" : n;
             return $"{PodPrefix(child.Pod)}_A{child.I2cAddr:D3}_{label}";
         }
 

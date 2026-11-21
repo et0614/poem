@@ -33,5 +33,14 @@ namespace PoEM.Common
         return 0;
       }
     }
+
+    /// <summary>
+    /// 表示用 ID の文字列 (仕様書 5.5 節)。22bit の値に 0x100000 を足し、16 進 6 桁 (大文字) で表す
+    /// (100000〜4FFFFE)。桁数を常に 6 桁にそろえ、先頭が 0 にならないようにする。
+    /// </summary>
+    public static string ToDisplay(uint id) => (id + 0x100000u).ToString("X6");
+
+    /// <summary>UID (16 進 32 文字) から表示用 ID の文字列を求める</summary>
+    public static string DisplayFromUid(string uidHex) => ToDisplay(FromUid(uidHex));
   }
 }

@@ -5,7 +5,7 @@ software/
 ├── PoEM.slnx            .NET のソリューション (src と tests のプロジェクトすべて)
 ├── PoEMServer.slnf      サーバと共通部だけを開く・ビルドする絞り込み (MAUI が無い環境向け)
 ├── src/
-│   ├── PoEM.Common/     サーバとアプリで共通の表 (機種名・単位・状態の名前) と Device ID (22bit) の計算
+│   ├── PoEM.Common/     サーバとアプリで共通の表 (機種名・単位・状態の名前) と表示用 ID (22bit、16 進 6 桁) の計算
 │   ├── PoEMServer/      MQTT ブローカ + BACnet ブリッジ。親機 (Pod) の MQTT v2 を BACnet に公開する
 │   ├── PoEMLink.Core/   PoEM Link との通信、OSL v2 の解釈、記録と CSV、Link と子機の模擬
 │   └── PoEMLink.App/    PoEM Link アプリ (iOS・Android・Windows、.NET MAUI)
