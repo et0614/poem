@@ -64,7 +64,7 @@
       <Border Style="{StaticResource Card}">
         <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
           <Label Text="模擬の Link と子機を使う" VerticalOptions="Center" />
-          <Switch Grid.Column="1" IsToggled="{Binding IsDemo}" OnColor="{StaticResource Primary}" />
+          <Switch Grid.Column="1" IsToggled="{Binding IsDemo}" />
           <Label Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource Muted}"
                  Text="実機なしで画面と記録を試すためのもの。値は作り物です。実機をつなぐと自動で実機に切り替わります。" />
         </Grid>

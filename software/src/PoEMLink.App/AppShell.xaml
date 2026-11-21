@@ -8,8 +8,9 @@
     Title="PoEM Link">
 
   <TabBar>
-    <ShellContent Title="計測" Route="main" ContentTemplate="{DataTemplate views:MainPage}" />
-    <ShellContent Title="Link と設定" Route="settings" ContentTemplate="{DataTemplate views:SettingsPage}" />
+    <!-- アイコンは Resources/Images/tab_*.svg。色は Styles.xaml の Shell の TabBar の色で塗られる -->
+    <ShellContent Title="計測" Icon="tab_measure.png" Route="main" ContentTemplate="{DataTemplate views:MainPage}" />
+    <ShellContent Title="Link と設定" Icon="tab_settings.png" Route="settings" ContentTemplate="{DataTemplate views:SettingsPage}" />
   </TabBar>
 
 </Shell>
